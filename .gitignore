@@ -1,0 +1,8 @@
+# GitNexus index
+.gitnexus/
+
+# Superpowers framework (separate git repo — not project code)
+superpowers/
+
+# Node.js
+node_modules/
