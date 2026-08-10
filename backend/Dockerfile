@@ -22,6 +22,8 @@ RUN mkdir -p /app/thumbnails /app/temp
 # EGL backend for pyrender on headless Linux (set before pyrender import)
 ENV PYOPENGL_PLATFORM=egl
 
+RUN chmod +x start.sh
+
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["./start.sh"]
