@@ -12,8 +12,8 @@ redis==5.2.1
 telethon==1.36.0
 patool==2.2.0
 aiofiles==24.1.0
-trimesh
-numpy
+trimesh==5.0.0
+numpy==2.5.2
 pyrender
-Pillow
-httpx
+Pillow==12.3.0
+httpx==0.28.1
