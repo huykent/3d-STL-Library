@@ -23,11 +23,11 @@ An **Automated 3D Model Library** — a full-stack system that:
 | Step 1 | ✅ COMPLETE | DB Schema + Project Structure |
 | Step 2 | ✅ COMPLETE | Telegram Listener & Downloader |
 | Step 3 | ✅ COMPLETE | STL Analyzer + AI Tagger |
-| Step 4 | 🟡 NEXT | FastAPI Backend |
-| Step 5 | ⏳ Pending | Next.js Frontend |
+| Step 4 | ✅ COMPLETE | FastAPI Backend |
+| Step 5 | 🟡 NEXT | Next.js Frontend |
 | Step 6 | ⏳ Pending | Docker Packaging |
 
-**Next action:** Invoke `writing-plans` skill to create implementation plan for Step 4 (FastAPI Backend). Plan file should be at `docs/superpowers/plans/step4-fastapi-backend.md` once written.
+**Next action:** Invoke `writing-plans` skill to create implementation plan for Step 5 (Next.js Frontend). Plan file should be at `docs/superpowers/plans/step5-nextjs-frontend.md` once written.
 
 ---
 
