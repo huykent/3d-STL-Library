@@ -1,0 +1,13 @@
+-r requirements.txt
+
+# Testing
+pytest==8.3.4
+pytest-asyncio==0.24.0
+pytest-env==1.1.5
+anyio[trio]==4.7.0
+
+# Test DB
+aiosqlite==0.20.0
+
+# Linting (optional)
+ruff==0.8.6

@@ -6,3 +6,31 @@ superpowers/
 
 # Node.js
 node_modules/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Pytest
+.pytest_cache/
+
+# Environment files
+.env
+
+# Alembic
+*.pyc
+
+# Thumbnails and temp (runtime artifacts, not source)
+backend/thumbnails/
+backend/temp/
+
+# Telethon session files
+*.session
