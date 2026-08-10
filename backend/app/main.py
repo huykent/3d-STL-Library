@@ -61,11 +61,21 @@ def create_app() -> FastAPI:
     async def health_check():
         return {"status": "ok", "env": settings.APP_ENV}
 
-    # Routers will be added in Step 4:
-    # app.include_router(auth_router, prefix="/auth", tags=["Auth"])
-    # app.include_router(models_router, prefix="/models", tags=["Models"])
-    # app.include_router(tags_router, prefix="/tags", tags=["Tags"])
-    # app.include_router(admin_router, prefix="/admin", tags=["Admin"])
+    # Auth
+    from app.api.auth import router as auth_router
+    app.include_router(auth_router, prefix="/api/auth", tags=["Auth"])
+
+    # Models
+    from app.api.models import router as models_router
+    app.include_router(models_router, prefix="/api/models", tags=["Models"])
+
+    # Tags
+    from app.api.tags import router as tags_router
+    app.include_router(tags_router, prefix="/api/tags", tags=["Tags"])
+
+    # Admin
+    from app.api.admin import router as admin_router
+    app.include_router(admin_router, prefix="/api/admin", tags=["Admin"])
 
     return app
 
