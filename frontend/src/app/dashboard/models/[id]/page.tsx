@@ -4,14 +4,13 @@ import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
 import { StlViewer } from '@/components/StlViewer';
-import { useAuth } from '@/components/AuthProvider';
+import { Model3D } from '@/components/ModelCard';
 
 export default function ModelDetailPage() {
   const params = useParams();
   const router = useRouter();
-  const { token } = useAuth();
   
-  const [model, setModel] = useState<any>(null);
+  const [model, setModel] = useState<Model3D | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -20,7 +19,7 @@ export default function ModelDetailPage() {
       try {
         const response = await api.get(`/models/${params.id}`);
         setModel(response.data);
-      } catch (err: any) {
+      } catch (err: unknown) {
         setError('Failed to load model details.');
         console.error(err);
       } finally {
@@ -186,7 +185,7 @@ export default function ModelDetailPage() {
                 <div className="mt-6">
                   <h3 className="text-sm text-gray-400 mb-2">Tags</h3>
                   <div className="flex flex-wrap gap-2">
-                    {model.tags.map((tag: any) => (
+                    {model.tags.map((tag: { id: number; name: string; slug: string }) => (
                       <span key={tag.id} className="text-xs bg-gray-700 text-gray-300 px-2 py-1 rounded-full border border-gray-600">
                         {tag.name}
                       </span>

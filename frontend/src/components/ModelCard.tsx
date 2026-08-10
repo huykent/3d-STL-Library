@@ -1,3 +1,4 @@
+/* eslint-disable @next/next/no-img-element */
 import Link from 'next/link';
 
 export interface Model3D {
@@ -13,6 +14,7 @@ export interface Model3D {
   ai_category?: string;
   ai_print_type?: string;
   processing_status: string;
+  tags?: { id: number; name: string; slug: string }[];
 }
 
 interface ModelCardProps {
