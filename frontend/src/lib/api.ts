@@ -56,7 +56,14 @@ export const verifyOtp = (data: {phone: string, code: string, phone_code_hash: s
 export const uploadManualFile = (file: File) => {
   const formData = new FormData();
   formData.append('file', file);
-  return api.post('/admin/upload', formData, {
+  
+  // Next.js rewrites have issues proxying large file uploads (memory buffering -> ERR_CONNECTION_RESET).
+  // We bypass it by uploading directly to the FastAPI backend (port 8000) using the current hostname.
+  const backendUrl = typeof window !== 'undefined' 
+    ? `${window.location.protocol}//${window.location.hostname}:8000/api/admin/upload`
+    : '/api/admin/upload';
+    
+  return api.post(backendUrl, formData, {
     headers: { 'Content-Type': 'multipart/form-data' }
   }).then(res => res.data);
 };
