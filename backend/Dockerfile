@@ -1,14 +1,17 @@
 FROM python:3.12-slim
 
 # System deps for pyrender EGL backend and archive extraction
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Enable non-free repo for unrar (RAR5 support)
+RUN sed -i 's/Components: main/Components: main contrib non-free non-free-firmware/g' /etc/apt/sources.list.d/debian.sources || true \
+    && sed -i 's/main/main contrib non-free non-free-firmware/g' /etc/apt/sources.list || true \
+    && apt-get update && apt-get install -y --no-install-recommends \
     libgl1 \
     libglx-mesa0 \
     libgles2 \
     libegl1 \
     libglu1-mesa \
     libgomp1 \
-    7zip \
+    unrar \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
