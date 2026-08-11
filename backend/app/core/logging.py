@@ -27,7 +27,12 @@ class RedisPubSubHandler(logging.Handler):
             # Use asyncio to publish. We must handle cases where loop is running.
             try:
                 loop = asyncio.get_running_loop()
-                loop.create_task(self._publish(log_data))
+                task = loop.create_task(self._publish(log_data))
+                # Hold a strong reference to avoid "Task was destroyed but it is pending!" error
+                if not hasattr(self, "_bg_tasks"):
+                    self._bg_tasks = set()
+                self._bg_tasks.add(task)
+                task.add_done_callback(self._bg_tasks.discard)
             except RuntimeError:
                 # No running loop, skip logging to redis for this event
                 pass
