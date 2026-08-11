@@ -2,8 +2,9 @@ FROM python:3.12-slim
 
 # System deps for pyrender EGL backend and archive extraction
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgl1-mesa-glx \
-    libgles2-mesa \
+    libgl1 \
+    libglx-mesa0 \
+    libgles2 \
     libegl1 \
     libgomp1 \
     unrar-free \
