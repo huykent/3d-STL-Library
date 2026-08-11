@@ -94,7 +94,11 @@ async def tag_model(
         "stream": False,
     }
 
-    url = f"{ollama_base_url.rstrip('/')}/v1/chat/completions"
+    base_url_clean = ollama_base_url.rstrip('/')
+    if base_url_clean.endswith('/v1'):
+        base_url_clean = base_url_clean[:-3]
+        
+    url = f"{base_url_clean}/v1/chat/completions"
 
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
