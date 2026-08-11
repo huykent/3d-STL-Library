@@ -250,17 +250,21 @@ async def process_manual_upload(ctx: dict, model_id: str, filepath: str) -> None
             target_3d_file = extracted_files[0]
             
             # 2. Upload to Telegram to get telegram_message_id and file_id
-            # Get the backup chat id (either TELEGRAM_BACKUP_CHAT_ID or first from chat_ids)
-            backup_chat_str = os.environ.get("TELEGRAM_BACKUP_CHAT_ID")
-            if backup_chat_str:
-                backup_chat_id = int(backup_chat_str.strip())
+            # Fetch TELEGRAM_TARGET_CHAT_ID from settings
+            from app.services.settings import SettingsService
+            target_chat_str = await SettingsService.get_setting("TELEGRAM_TARGET_CHAT_ID")
+            if not target_chat_str:
+                target_chat_str = os.environ.get("TELEGRAM_BACKUP_CHAT_ID")
+                
+            if target_chat_str:
+                backup_chat_id = int(target_chat_str.strip())
             else:
                 chats = settings.chat_ids
                 if not chats:
-                    raise ValueError("No Telegram chat IDs configured for backup.")
+                    raise ValueError("No Telegram Target Chat ID configured.")
                 backup_chat_id = chats[0]
             
-            logger.info(f"[{model.id}] Uploading manual file to Telegram backup group {backup_chat_id}...")
+            logger.info(f"[{model.id}] Uploading manual file to Telegram target group {backup_chat_id}...")
             tg_message = await telegram_client.send_file(
                 backup_chat_id, 
                 filepath, 
