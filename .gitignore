@@ -34,3 +34,7 @@ backend/temp/
 
 # Telethon session files
 *.session
+
+# Deployment
+.env.deploy
+deploy_archive.tar.gz
