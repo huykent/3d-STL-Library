@@ -140,7 +140,6 @@ async def get_model(
 async def get_thumbnail(
     model_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
 ):
     result = await db.execute(
         select(Model3D.thumbnail_path).where(Model3D.id == model_id)
@@ -166,7 +165,6 @@ async def get_thumbnail(
 async def download_model(
     model_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
 ):
     """Stream the original STL/OBJ file from Telegram without storing it locally."""
     from fastapi.responses import StreamingResponse
