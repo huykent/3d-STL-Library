@@ -101,25 +101,31 @@ async def tag_model(
     url = f"{base_url_clean}/v1/chat/completions"
 
     try:
+        logger.info(f"[{filename}] Sending context to LLM: {json.dumps(payload, ensure_ascii=False)}")
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.post(url, json=payload)
             response.raise_for_status()
             data = response.json()
 
         raw_content: str = data["choices"][0]["message"]["content"]
+        
+        full_debug_info = {
+            "request_payload": payload,
+            "response_data": data
+        }
 
         try:
             parsed = json.loads(raw_content)
         except json.JSONDecodeError:
             logger.warning(f"Ollama returned non-JSON content: {raw_content!r}")
-            return AITagResult(raw_response=data)
+            return AITagResult(raw_response=full_debug_info)
 
         return AITagResult(
             predicted_name=parsed.get("predicted_name", "Unknown"),
             category=parsed.get("category", "Other"),
             print_type=parsed.get("print_type", "Unknown"),
             keywords=parsed.get("keywords", []),
-            raw_response=data,
+            raw_response=full_debug_info,
         )
 
     except httpx.HTTPError as e:
