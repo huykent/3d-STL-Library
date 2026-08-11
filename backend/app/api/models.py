@@ -152,10 +152,13 @@ async def get_thumbnail(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No thumbnail available")
 
     import os
-    if not os.path.isfile(thumbnail_path):
+    from app.config import get_settings
+    full_path = os.path.join(get_settings().THUMBNAIL_DIR, thumbnail_path)
+    
+    if not os.path.isfile(full_path):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thumbnail file not found")
 
-    return FileResponse(thumbnail_path, media_type="image/png")
+    return FileResponse(full_path, media_type="image/png")
 
 
 @router.get(
