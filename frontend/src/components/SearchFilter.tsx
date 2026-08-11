@@ -1,4 +1,11 @@
 import { useState } from 'react';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 export interface FilterValues {
   search: string;
@@ -14,70 +21,61 @@ interface SearchFilterProps {
 export function SearchFilter({ onFilterChange }: SearchFilterProps) {
   const [filters, setFilters] = useState<FilterValues>({
     search: '',
-    detail_level: '',
-    ai_category: '',
-    ai_print_type: '',
+    detail_level: 'all',
+    ai_category: 'all',
+    ai_print_type: 'all',
   });
 
   const handleChange = (key: keyof FilterValues, value: string) => {
-    const newFilters = { ...filters, [key]: value };
+    const newVal = value === 'all' ? '' : value;
+    const newFilters = { ...filters, [key]: newVal };
     setFilters(newFilters);
     onFilterChange(newFilters);
   };
 
   return (
-    <div className="bg-gray-800 p-4 rounded-lg border border-gray-700 mb-6 flex flex-col md:flex-row gap-4 items-center">
-      <div className="flex-grow w-full md:w-auto">
-        <input
-          type="text"
-          placeholder="Search models..."
-          value={filters.search}
-          onChange={(e) => handleChange('search', e.target.value)}
-          className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-        />
-      </div>
-      
-      <div className="flex flex-wrap gap-4 w-full md:w-auto">
-        <select
-          value={filters.detail_level}
-          onChange={(e) => handleChange('detail_level', e.target.value)}
-          className="px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-        >
-          <option value="">All Detail Levels</option>
-          <option value="low_poly">Low Poly (&lt;10k)</option>
-          <option value="medium_poly">Medium Poly</option>
-          <option value="high_poly">High Poly</option>
-          <option value="resin_ready">Resin Ready (&gt;1M)</option>
-        </select>
+    <div className="flex flex-wrap gap-3 items-center w-full">
+      <Select value={filters.detail_level || 'all'} onValueChange={(val) => handleChange('detail_level', val)}>
+        <SelectTrigger className="w-[160px] bg-white/5 border-white/10 text-gray-200 rounded-full h-10">
+          <SelectValue placeholder="All Detail Levels" />
+        </SelectTrigger>
+        <SelectContent className="bg-gray-900 border-white/10 text-gray-200">
+          <SelectItem value="all">All Detail Levels</SelectItem>
+          <SelectItem value="low_poly">Low Poly (&lt;10k)</SelectItem>
+          <SelectItem value="medium_poly">Medium Poly</SelectItem>
+          <SelectItem value="high_poly">High Poly</SelectItem>
+          <SelectItem value="resin_ready">Resin Ready (&gt;1M)</SelectItem>
+        </SelectContent>
+      </Select>
 
-        <select
-          value={filters.ai_print_type}
-          onChange={(e) => handleChange('ai_print_type', e.target.value)}
-          className="px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-        >
-          <option value="">All Print Types</option>
-          <option value="FDM">FDM</option>
-          <option value="Resin">Resin</option>
-          <option value="Unknown">Unknown</option>
-        </select>
-        
-        {/* We can hardcode some categories or fetch them, hardcoding for simplicity based on spec */}
-        <select
-          value={filters.ai_category}
-          onChange={(e) => handleChange('ai_category', e.target.value)}
-          className="px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-        >
-          <option value="">All Categories</option>
-          <option value="Functional">Functional</option>
-          <option value="Mechanical">Mechanical</option>
-          <option value="Figurine">Figurine</option>
-          <option value="Prop">Prop</option>
-          <option value="Miniature">Miniature</option>
-          <option value="Terrain">Terrain</option>
-          <option value="Jewelry">Jewelry</option>
-          <option value="Art">Art</option>
-        </select>
-      </div>
+      <Select value={filters.ai_print_type || 'all'} onValueChange={(val) => handleChange('ai_print_type', val)}>
+        <SelectTrigger className="w-[150px] bg-white/5 border-white/10 text-gray-200 rounded-full h-10">
+          <SelectValue placeholder="All Print Types" />
+        </SelectTrigger>
+        <SelectContent className="bg-gray-900 border-white/10 text-gray-200">
+          <SelectItem value="all">All Print Types</SelectItem>
+          <SelectItem value="FDM">FDM</SelectItem>
+          <SelectItem value="Resin">Resin</SelectItem>
+          <SelectItem value="Unknown">Unknown</SelectItem>
+        </SelectContent>
+      </Select>
+      
+      <Select value={filters.ai_category || 'all'} onValueChange={(val) => handleChange('ai_category', val)}>
+        <SelectTrigger className="w-[160px] bg-white/5 border-white/10 text-gray-200 rounded-full h-10">
+          <SelectValue placeholder="All Categories" />
+        </SelectTrigger>
+        <SelectContent className="bg-gray-900 border-white/10 text-gray-200">
+          <SelectItem value="all">All Categories</SelectItem>
+          <SelectItem value="Functional">Functional</SelectItem>
+          <SelectItem value="Mechanical">Mechanical</SelectItem>
+          <SelectItem value="Figurine">Figurine</SelectItem>
+          <SelectItem value="Prop">Prop</SelectItem>
+          <SelectItem value="Miniature">Miniature</SelectItem>
+          <SelectItem value="Terrain">Terrain</SelectItem>
+          <SelectItem value="Jewelry">Jewelry</SelectItem>
+          <SelectItem value="Art">Art</SelectItem>
+        </SelectContent>
+      </Select>
     </div>
   );
 }

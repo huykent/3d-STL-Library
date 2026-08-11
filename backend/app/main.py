@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
+from app.core.logging import setup_redis_logging
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +16,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Startup and shutdown events."""
+    setup_redis_logging("API")
     settings = get_settings()
     logger.info(f"Starting STL Library API | env={settings.APP_ENV}")
     
@@ -24,7 +26,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Do not start telethon in tests unless explicitly enabled
     if settings.APP_ENV != "test" and settings.TELEGRAM_API_ID:
         try:
-            register_handlers()
+            await register_handlers()
             await start_telegram_client()
             logger.info("Telegram client started and handlers registered")
         except Exception as e:
@@ -76,6 +78,14 @@ def create_app() -> FastAPI:
     # Admin
     from app.api.admin import router as admin_router
     app.include_router(admin_router, prefix="/api/admin", tags=["Admin"])
+    
+    # Upload
+    from app.api.upload import router as upload_router
+    app.include_router(upload_router, prefix="/api/admin", tags=["Upload"])
+
+    # Logs
+    from app.api.logs import router as logs_router
+    app.include_router(logs_router, prefix="/api/admin/logs", tags=["Logs"])
 
     return app
 

@@ -6,6 +6,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libglx-mesa0 \
     libgles2 \
     libegl1 \
+    libglu1-mesa \
     libgomp1 \
     unrar-free \
     && rm -rf /var/lib/apt/lists/*
@@ -17,8 +18,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Ensure thumbnails and temp dirs exist
-RUN mkdir -p /app/thumbnails /app/temp
+# Ensure thumbnails, sessions and temp dirs exist
+RUN mkdir -p /app/thumbnails /app/temp /app/sessions
 
 # EGL backend for pyrender on headless Linux (set before pyrender import)
 ENV PYOPENGL_PLATFORM=egl

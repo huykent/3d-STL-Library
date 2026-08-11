@@ -18,6 +18,7 @@ COPY . .
 
 # Next.js telemetry is disabled
 ENV NEXT_TELEMETRY_DISABLED 1
+ENV API_URL http://api:8000
 
 RUN npm run build
 

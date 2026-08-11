@@ -60,10 +60,10 @@ class Model3D(Base):
     file_size_bytes: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
 
     # ── Telegram storage ──────────────────────────────────────────
-    telegram_file_id: Mapped[str] = mapped_column(
-        String(500), unique=True, nullable=False
+    telegram_file_id: Mapped[Optional[str]] = mapped_column(
+        String(500), unique=True, nullable=True
     )
-    telegram_message_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    telegram_message_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     source_group_id: Mapped[Optional[int]] = mapped_column(
         Integer, ForeignKey("source_groups.id"), nullable=True
     )
@@ -72,6 +72,7 @@ class Model3D(Base):
     # ── STL Analysis ──────────────────────────────────────────────
     vertex_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     face_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    part_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     detail_level: Mapped[Optional[DetailLevel]] = mapped_column(
         SAEnum(DetailLevel, name="detaillevel", create_type=True), nullable=True
     )

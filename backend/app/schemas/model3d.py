@@ -25,13 +25,14 @@ class Model3DOut(BaseModel):
     file_size_bytes: Optional[int]
 
     # Telegram
-    telegram_message_id: int
+    telegram_message_id: Optional[int]
     source_group_id: Optional[int]
     telegram_message_text: Optional[str]
 
     # STL Analysis
     vertex_count: Optional[int]
     face_count: Optional[int]
+    part_count: Optional[int]
     detail_level: Optional[DetailLevel]
     bbox_x_mm: Optional[float]
     bbox_y_mm: Optional[float]

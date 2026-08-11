@@ -44,3 +44,23 @@ api.interceptors.response.use(
     return Promise.reject(error);
   }
 );
+
+// Settings APIs
+export const getSettings = () => api.get('/admin/settings').then(res => res.data);
+export const updateSettings = (settings: Record<string, string>) => api.post('/admin/settings', settings).then(res => res.data);
+export const restartTelegram = () => api.post('/admin/telegram/restart').then(res => res.data);
+export const sendCode = (data: {phone: string}) => api.post('/admin/telegram/send-code', data).then(res => res.data);
+export const verifyOtp = (data: {phone: string, code: string, phone_code_hash: string, password?: string}) => api.post('/admin/telegram/verify-otp', data).then(res => res.data);
+
+// Upload API
+export const uploadManualFile = (file: File) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  return api.post('/admin/upload', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  }).then(res => res.data);
+};
+
+// Model Edit API
+export const updateModel = (modelId: string, data: any) => api.put(`/models/${modelId}`, data).then(res => res.data);
+export const deleteModel = (modelId: string) => api.delete(`/models/${modelId}`).then(res => res.data);

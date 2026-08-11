@@ -22,6 +22,7 @@ class SourceGroup(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     model_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     last_message_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    oldest_message_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, nullable=False)
 
     models: Mapped[List["Model3D"]] = relationship(

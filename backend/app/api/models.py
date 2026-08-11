@@ -184,7 +184,7 @@ async def download_model(
 
     file_id, filename = row
 
-    client = get_telegram_client()
+    client = await get_telegram_client()
     stream = stream_file_from_telegram(client, file_id)
 
     return StreamingResponse(
@@ -194,3 +194,96 @@ async def download_model(
             "Content-Disposition": f'attachment; filename="{filename}"'
         },
     )
+
+from app.api.deps import get_current_active_admin
+from app.models.tag import Tag
+
+@router.put(
+    "/{model_id}",
+    response_model=Model3DOut,
+    summary="Update model metadata and tags (admin only)",
+)
+async def update_model(
+    model_id: uuid.UUID,
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(get_current_active_admin),
+) -> Model3DOut:
+    result = await db.execute(
+        select(Model3D).options(selectinload(Model3D.tags)).where(Model3D.id == model_id)
+    )
+    model = result.scalar_one_or_none()
+    if not model:
+        raise HTTPException(status_code=404, detail="Model not found")
+
+    if "predicted_name" in body:
+        val = body["predicted_name"]
+        model.predicted_name = val if val != "" else None
+    if "ai_category" in body:
+        val = body["ai_category"]
+        model.ai_category = val if val != "" else None
+    if "ai_print_type" in body:
+        val = body["ai_print_type"]
+        if val == "":
+            model.ai_print_type = None
+        else:
+            try:
+                model.ai_print_type = PrintType(val)
+            except ValueError:
+                raise HTTPException(status_code=400, detail=f"Invalid print type: {val}")
+
+    # Handle tag updates
+    if "keywords" in body:
+        tag_names = [t.strip().lower() for t in body["keywords"] if t.strip()]
+        existing_tags_query = await db.execute(select(Tag).where(Tag.name.in_(tag_names)))
+        existing_tags = existing_tags_query.scalars().all()
+        existing_tag_map = {t.name: t for t in existing_tags}
+
+        new_tags = []
+        for name in tag_names:
+            if name in existing_tag_map:
+                new_tags.append(existing_tag_map[name])
+            else:
+                import re
+                slug = re.sub(r'[^a-z0-9]+', '-', name.lower()).strip('-')
+                new_tag = Tag(name=name, slug=slug)
+                db.add(new_tag)
+                new_tags.append(new_tag)
+        
+        model.tags = new_tags
+
+    await db.commit()
+    await db.refresh(model)
+    
+    out = Model3DOut.model_validate(model)
+    if model.thumbnail_path:
+        out.thumbnail_url = f"/api/models/{model.id}/thumbnail"
+    return out
+
+@router.delete(
+    "/{model_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a model (admin only)",
+)
+async def delete_model(
+    model_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(get_current_active_admin),
+):
+    result = await db.execute(select(Model3D).where(Model3D.id == model_id))
+    model = result.scalar_one_or_none()
+    if not model:
+        raise HTTPException(status_code=404, detail="Model not found")
+        
+    # Delete thumbnail if exists
+    if model.thumbnail_path:
+        import os
+        thumb_path = os.path.join(get_settings().THUMBNAIL_DIR, model.thumbnail_path)
+        if os.path.exists(thumb_path):
+            try:
+                os.unlink(thumb_path)
+            except Exception:
+                pass
+                
+    await db.delete(model)
+    await db.commit()

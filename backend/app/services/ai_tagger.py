@@ -68,7 +68,12 @@ async def tag_model(
     Returns:
         AITagResult with parsed fields, or a default fallback on error.
     """
-    settings = get_settings()
+    env_settings = get_settings()
+    from app.services.settings import SettingsService
+    
+    ollama_base_url = await SettingsService.get_setting("OLLAMA_BASE_URL", env_settings.OLLAMA_BASE_URL)
+    ollama_model = await SettingsService.get_setting("OLLAMA_MODEL", env_settings.OLLAMA_MODEL)
+    
     bbox_x, bbox_y, bbox_z = bbox
 
     user_prompt = USER_PROMPT_TEMPLATE.format(
@@ -80,7 +85,7 @@ async def tag_model(
     )
 
     payload = {
-        "model": settings.OLLAMA_MODEL,
+        "model": ollama_model,
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},
@@ -89,7 +94,7 @@ async def tag_model(
         "stream": False,
     }
 
-    url = f"{settings.OLLAMA_BASE_URL.rstrip('/')}/v1/chat/completions"
+    url = f"{ollama_base_url.rstrip('/')}/v1/chat/completions"
 
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:

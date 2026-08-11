@@ -29,10 +29,24 @@ async def handle_new_message(event):
         chat_id=event.chat_id
     )
 
-def register_handlers():
-    client = get_telegram_client()
+async def register_handlers():
+    client = await get_telegram_client()
     settings = get_settings()
+    
+    # We could also use SettingsService for chat_ids, but for now fallback to env
+    from app.services.settings import SettingsService
+    # Try getting from DB first, if not use env.
+    chat_ids_str = await SettingsService.get_setting("TELEGRAM_CHAT_IDS")
+    
+    if chat_ids_str:
+        try:
+            chat_ids = [int(x.strip()) for x in chat_ids_str.split(',') if x.strip()]
+        except ValueError:
+            chat_ids = settings.chat_ids
+    else:
+        chat_ids = settings.chat_ids
+        
     client.add_event_handler(
         handle_new_message, 
-        events.NewMessage(chats=settings.chat_ids)
+        events.NewMessage(chats=chat_ids)
     )
