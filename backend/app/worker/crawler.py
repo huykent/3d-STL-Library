@@ -1,6 +1,7 @@
 import logging
 from app.database import AsyncSessionLocal
 from app.models.source_group import SourceGroup
+from app.models.model3d import Model3D
 from sqlalchemy import select
 from datetime import datetime, timedelta, timezone
 
@@ -71,6 +72,17 @@ async def cron_crawl_history(ctx: dict) -> None:
                             # but older messages might be mixed. Usually they are ordered.
                             continue
 
+                        # Check for duplicates (same message or same file content)
+                        file_id_str = str(message.document.id)
+                        stmt_dup = select(Model3D.id).where(
+                            (Model3D.telegram_message_id == message.id) |
+                            (Model3D.telegram_file_id == file_id_str)
+                        )
+                        existing = await session.execute(stmt_dup)
+                        if existing.scalar_one_or_none():
+                            logger.info(f"Duplicate file/message {message.id} in {chat_id}. Skipping.")
+                            continue
+
                         # Enqueue job
                         await redis.enqueue_job(
                             'process_telegram_message', 
@@ -100,31 +112,43 @@ async def manual_crawl_history(ctx: dict, chat_id: int, limit: int = 1) -> None:
     logger.info(f"Starting MANUAL crawl for group {chat_id}, limit={limit}")
     
     try:
-        messages = await telegram_client.get_messages(chat_id, limit=limit * 10) # Fetch more to find enough files
-        files_queued = 0
-        
-        for message in messages:
-            if files_queued >= limit:
-                break
-                
-            if not message.document:
-                continue
-                
-            file_ext = ""
-            for attribute in message.document.attributes:
-                if hasattr(attribute, 'file_name'):
-                    file_ext = attribute.file_name.split('.')[-1].lower()
+        async with AsyncSessionLocal() as session:
+            messages = await telegram_client.get_messages(chat_id, limit=limit * 10) # Fetch more to find enough files
+            files_queued = 0
+            
+            for message in messages:
+                if files_queued >= limit:
                     break
                     
-            if file_ext in ['stl', 'obj', '3mf', 'pm7m', 'pwscene', 'zip', 'rar']:
-                logger.info(f"[MANUAL CRAWL] Found 3D file: {message.id} in {chat_id}")
-                await redis.enqueue_job(
-                    'process_telegram_message', 
-                    message_id=message.id,
-                    chat_id=chat_id
-                )
-                files_queued += 1
-                
-        logger.info(f"[MANUAL CRAWL] Finished. Queued {files_queued} files.")
+                if not message.document:
+                    continue
+                    
+                file_ext = ""
+                for attribute in message.document.attributes:
+                    if hasattr(attribute, 'file_name'):
+                        file_ext = attribute.file_name.split('.')[-1].lower()
+                        break
+                        
+                if file_ext in ['stl', 'obj', '3mf', 'pm7m', 'pwscene', 'zip', 'rar']:
+                    # Check for duplicates
+                    file_id_str = str(message.document.id)
+                    stmt_dup = select(Model3D.id).where(
+                        (Model3D.telegram_message_id == message.id) |
+                        (Model3D.telegram_file_id == file_id_str)
+                    )
+                    existing = await session.execute(stmt_dup)
+                    if existing.scalar_one_or_none():
+                        logger.info(f"[MANUAL CRAWL] Duplicate file/message {message.id} in {chat_id}. Skipping.")
+                        continue
+                        
+                    logger.info(f"[MANUAL CRAWL] Found 3D file: {message.id} in {chat_id}")
+                    await redis.enqueue_job(
+                        'process_telegram_message', 
+                        message_id=message.id,
+                        chat_id=chat_id
+                    )
+                    files_queued += 1
+                    
+            logger.info(f"[MANUAL CRAWL] Finished. Queued {files_queued} files.")
     except Exception as e:
         logger.error(f"[MANUAL CRAWL] Failed for group {chat_id}: {e}")
