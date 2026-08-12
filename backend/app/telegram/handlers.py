@@ -16,7 +16,7 @@ async def handle_new_message(event):
             file_ext = attribute.file_name.split('.')[-1].lower()
             break
             
-    if file_ext not in ['stl', 'obj', 'zip', 'rar']:
+    if file_ext not in ['stl', 'obj', '3mf', 'pm7m', 'pwscene', 'zip', 'rar']:
         return
 
     logger.info(f"Found 3D file: {event.message.id}")
