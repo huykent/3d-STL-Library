@@ -41,6 +41,7 @@ class Model3DOut(BaseModel):
 
     # Thumbnail URL (computed by API, not stored)
     thumbnail_url: Optional[str] = None
+    image_urls: List[str] = []
 
     # AI Tagging
     predicted_name: Optional[str]

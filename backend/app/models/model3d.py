@@ -81,8 +81,9 @@ class Model3D(Base):
     bbox_z_mm: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     volume_mm3: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
-    # ── Thumbnail ─────────────────────────────────────────────────
+    # ── Thumbnail & Images ────────────────────────────────────────
     thumbnail_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    image_paths: Mapped[Optional[list]] = mapped_column(JSONB, default=list, nullable=True)
 
     # ── AI Tagging ────────────────────────────────────────────────
     predicted_name: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
