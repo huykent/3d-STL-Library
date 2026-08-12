@@ -64,6 +64,19 @@ export default function DashboardPage() {
     return () => clearTimeout(timer);
   }, [filters, search, fetchModels]);
 
+  // Polling for processing models
+  useEffect(() => {
+    const hasProcessing = models.some(m => m.processing_status === 'processing' || m.processing_status === 'pending');
+    if (!hasProcessing) return;
+
+    const interval = setInterval(() => {
+      const currentFilters = { ...filters, search };
+      fetchModels(currentFilters, 1, false); // Fetch page 1 again silently
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [models, filters, search, fetchModels]);
+
   const loadMore = () => {
     if (!loading && hasNext) {
       const nextPage = page + 1;

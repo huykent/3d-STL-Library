@@ -102,6 +102,7 @@ class Model3D(Base):
         nullable=False,
     )
     processing_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    processing_logs: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
     processing_retries: Mapped[int] = mapped_column(SmallInteger, default=0, nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, nullable=False)

@@ -33,18 +33,27 @@ export default function ModelDetailPage() {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
+    let interval: NodeJS.Timeout;
+    
     const fetchModel = async () => {
       try {
         const response = await api.get(`/models/${params.id}`);
         setModel(response.data);
-        setEditData({
-          predicted_name: response.data.predicted_name || response.data.original_filename,
-          ai_category: response.data.ai_category || '',
-          ai_print_type: response.data.ai_print_type || '',
-          keywords: response.data.tags?.map((t: any) => t.name).join(', ') || ''
-        });
+        if (!isEditing) {
+          setEditData({
+            predicted_name: response.data.predicted_name || response.data.original_filename,
+            ai_category: response.data.ai_category || '',
+            ai_print_type: response.data.ai_print_type || '',
+            keywords: response.data.tags?.map((t: any) => t.name).join(', ') || ''
+          });
+        }
+        
+        // Stop polling if completed or failed
+        if (response.data.processing_status === 'completed' || response.data.processing_status === 'failed') {
+          clearInterval(interval);
+        }
       } catch (err: unknown) {
-        setError('Failed to load model details.');
+        if (!model) setError('Failed to load model details.');
         console.error(err);
       } finally {
         setLoading(false);
@@ -53,8 +62,14 @@ export default function ModelDetailPage() {
 
     if (params.id) {
       fetchModel();
+      // Start polling every 3 seconds for live updates
+      interval = setInterval(fetchModel, 3000);
     }
-  }, [params.id]);
+    
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [params.id, isEditing]);
 
   const handleDownload = async () => {
     if (!model) return;
@@ -318,6 +333,38 @@ export default function ModelDetailPage() {
               )}
               </CardContent>
             </Card>
+
+            {model.processing_logs && model.processing_logs.length > 0 && (
+              <Card className="bg-[#1c2128] border-white/10">
+                <CardHeader className="pb-4">
+                  <CardTitle className="text-lg text-white">Tiến trình xử lý (Logs)</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-4 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
+                    {model.processing_logs.map((log, idx) => (
+                      <div key={idx} className="flex gap-3 text-sm">
+                        <div className="flex flex-col items-center mt-1">
+                          <div className={`w-2 h-2 rounded-full ${idx === model.processing_logs!.length - 1 && model.processing_status === 'processing' ? 'bg-blue-400 animate-pulse' : 'bg-gray-500'}`} />
+                          {idx < model.processing_logs!.length - 1 && <div className="w-px h-full bg-gray-700 my-1" />}
+                        </div>
+                        <div className="pb-4">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium text-gray-300">{log.step}</span>
+                            <span className="text-xs text-gray-500">{new Date(log.time).toLocaleTimeString()}</span>
+                          </div>
+                          <p className="text-gray-400 mt-1">{log.message}</p>
+                          {log.path && (
+                            <code className="text-xs bg-black/30 text-gray-500 px-2 py-1 rounded mt-2 block break-all">
+                              {log.path}
+                            </code>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
             
           </div>
         </div>

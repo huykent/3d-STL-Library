@@ -20,23 +20,26 @@ from app.config import get_settings
 logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = (
-    "You are a 3D printing expert. Analyze the given 3D model metadata and respond "
-    "with ONLY a JSON object (no markdown, no explanation) with this exact structure:\n"
+    "Bạn là một chuyên gia in 3D. Hãy phân tích các thông số và NỘI DUNG TIN NHẮN (nếu có) của model 3D này.\n"
+    "Quy tắc phân loại:\n"
+    "- Nếu face count > 500,000, khả năng cao là in Resin.\n"
+    "- Nếu có các từ khoá cơ khí, bánh răng, lắp ráp... thì thường là FDM.\n"
+    "Bạn PHẢI trả về duy nhất một object JSON (không markdown, không giải thích) với cấu trúc:\n"
     "{\n"
-    '  "predicted_name": "Short descriptive name for the model",\n'
-    '  "category": "One of: Figurine, Mechanical, Functional, Architecture, Jewelry, '
-    'Educational, Vehicle, Animal, Weapon, Other",\n'
-    '  "print_type": "One of: FDM, Resin, Unknown",\n'
-    '  "keywords": ["keyword1", "keyword2", "keyword3"]\n'
+    '  "predicted_name": "Tên tiếng Việt rõ ràng, ngắn gọn của model (xoá các đuôi file .stl, .zip, v.v...)",\n'
+    '  "category": "Một trong: Figurine, Mechanical, Functional, Architecture, Jewelry, Educational, Vehicle, Animal, Weapon, Other",\n'
+    '  "print_type": "Một trong: FDM, Resin, Unknown",\n'
+    '  "keywords": ["từ khoá tiếng việt 1", "từ khoá tiếng việt 2"]\n'
     "}"
 )
 
 USER_PROMPT_TEMPLATE = (
-    "Analyze this 3D model:\n"
+    "Phân tích model 3D sau:\n"
     "- Filename: {filename}\n"
     "- Face count: {face_count:,}\n"
-    "- Bounding box: {bbox_x:.1f}mm × {bbox_y:.1f}mm × {bbox_z:.1f}mm\n\n"
-    "Respond with the JSON object only."
+    "- Bounding box: {bbox_x:.1f}mm × {bbox_y:.1f}mm × {bbox_z:.1f}mm\n"
+    "- Nội dung tin nhắn gốc: {message_text}\n\n"
+    "Chỉ trả về JSON object."
 )
 
 
@@ -55,6 +58,7 @@ async def tag_model(
     filename: str,
     face_count: int,
     bbox: tuple[float, float, float],
+    message_text: str = "",
 ) -> AITagResult:
     """Call Ollama API and parse structured tags for a 3D model.
 
@@ -64,6 +68,7 @@ async def tag_model(
         filename: Original filename of the model (e.g. "dragon.stl").
         face_count: Number of faces in the mesh (used as complexity hint).
         bbox: (x_mm, y_mm, z_mm) bounding box dimensions in millimetres.
+        message_text: Original Telegram message text for extra context.
 
     Returns:
         AITagResult with parsed fields, or a default fallback on error.
@@ -82,6 +87,7 @@ async def tag_model(
         bbox_x=bbox_x,
         bbox_y=bbox_y,
         bbox_z=bbox_z,
+        message_text=message_text,
     )
 
     payload = {

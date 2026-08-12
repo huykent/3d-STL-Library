@@ -10,20 +10,11 @@ def run():
     password = os.getenv('DEPLOY_PASS')
     deploy_dir = os.getenv('DEPLOY_DIR', '/root/telebot')
     
-    print(f"Connecting to {user}@{host} to fetch logs...")
-    connect_kwargs = {}
-    if password:
-        connect_kwargs["password"] = password
-    else:
-        print("No password found")
-        return
-
+    project_root = Path(__file__).parent
+    connect_kwargs = {"password": password}
+    
     with Connection(host=host, user=user, connect_kwargs=connect_kwargs) as c:
-        res_worker = c.run(f"cd {deploy_dir} && docker compose logs --tail=200 worker", hide=True, warn=True)
-        with open("worker_logs.txt", "w", encoding="utf-8") as f:
-            f.write(res_worker.stdout)
-        
-        print("Logs saved to worker_logs.txt")
+        print(c.run(f"cd {deploy_dir} && docker compose exec worker cat /etc/apt/sources.list.d/debian.sources", warn=True).stdout)
 
 if __name__ == "__main__":
     run()

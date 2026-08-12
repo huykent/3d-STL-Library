@@ -1,0 +1,97 @@
+stl_worker  | 18:12:35: Starting worker for 3 functions: process_telegram_message, process_manual_upload, cron:cron_crawl_history
+stl_worker  | 18:12:35: redis_version=7.4.10 mem_usage=1.01M clients_connected=1 db_keys=4
+stl_worker  | 2026-08-11 18:12:35,543 INFO sqlalchemy.engine.Engine select pg_catalog.version()
+stl_worker  | 2026-08-11 18:12:35,543 INFO sqlalchemy.engine.Engine [raw sql] ()
+stl_worker  | 2026-08-11 18:12:35,554 INFO sqlalchemy.engine.Engine select current_schema()
+stl_worker  | 2026-08-11 18:12:35,554 INFO sqlalchemy.engine.Engine [raw sql] ()
+stl_worker  | 2026-08-11 18:12:35,571 INFO sqlalchemy.engine.Engine show standard_conforming_strings
+stl_worker  | 2026-08-11 18:12:35,571 INFO sqlalchemy.engine.Engine [raw sql] ()
+stl_worker  | 2026-08-11 18:12:35,583 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+stl_worker  | 2026-08-11 18:12:35,607 INFO sqlalchemy.engine.Engine SELECT app_configs.key, app_configs.value, app_configs.description, app_configs.is_secret 
+stl_worker  | FROM app_configs
+stl_worker  | 2026-08-11 18:12:35,607 INFO sqlalchemy.engine.Engine [generated in 0.00061s] ()
+stl_worker  | 2026-08-11 18:12:35,649 INFO sqlalchemy.engine.Engine ROLLBACK
+stl_worker  | 2026-08-11 18:12:35,718 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+stl_worker  | 2026-08-11 18:12:35,723 INFO sqlalchemy.engine.Engine SELECT pg_catalog.pg_class.relname 
+stl_worker  | FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+stl_worker  | WHERE pg_catalog.pg_class.relname = $1::VARCHAR AND pg_catalog.pg_class.relkind = ANY (ARRAY[$2::VARCHAR, $3::VARCHAR, $4::VARCHAR, $5::VARCHAR, $6::VARCHAR]) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != $7::VARCHAR
+stl_worker  | 2026-08-11 18:12:35,724 INFO sqlalchemy.engine.Engine [generated in 0.00070s] ('users', 'r', 'p', 'f', 'v', 'm', 'pg_catalog')
+stl_worker  | 2026-08-11 18:12:35,749 INFO sqlalchemy.engine.Engine SELECT pg_catalog.pg_class.relname 
+stl_worker  | FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+stl_worker  | WHERE pg_catalog.pg_class.relname = $1::VARCHAR AND pg_catalog.pg_class.relkind = ANY (ARRAY[$2::VARCHAR, $3::VARCHAR, $4::VARCHAR, $5::VARCHAR, $6::VARCHAR]) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != $7::VARCHAR
+stl_worker  | 2026-08-11 18:12:35,749 INFO sqlalchemy.engine.Engine [cached since 0.02613s ago] ('source_groups', 'r', 'p', 'f', 'v', 'm', 'pg_catalog')
+stl_worker  | 2026-08-11 18:12:35,758 INFO sqlalchemy.engine.Engine SELECT pg_catalog.pg_class.relname 
+stl_worker  | FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+stl_worker  | WHERE pg_catalog.pg_class.relname = $1::VARCHAR AND pg_catalog.pg_class.relkind = ANY (ARRAY[$2::VARCHAR, $3::VARCHAR, $4::VARCHAR, $5::VARCHAR, $6::VARCHAR]) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != $7::VARCHAR
+stl_worker  | 2026-08-11 18:12:35,759 INFO sqlalchemy.engine.Engine [cached since 0.0357s ago] ('model_tags', 'r', 'p', 'f', 'v', 'm', 'pg_catalog')
+stl_worker  | 2026-08-11 18:12:35,768 INFO sqlalchemy.engine.Engine SELECT pg_catalog.pg_class.relname 
+stl_worker  | FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+stl_worker  | WHERE pg_catalog.pg_class.relname = $1::VARCHAR AND pg_catalog.pg_class.relkind = ANY (ARRAY[$2::VARCHAR, $3::VARCHAR, $4::VARCHAR, $5::VARCHAR, $6::VARCHAR]) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != $7::VARCHAR
+stl_worker  | 2026-08-11 18:12:35,769 INFO sqlalchemy.engine.Engine [cached since 0.04575s ago] ('tags', 'r', 'p', 'f', 'v', 'm', 'pg_catalog')
+stl_worker  | 2026-08-11 18:12:35,780 INFO sqlalchemy.engine.Engine SELECT pg_catalog.pg_class.relname 
+stl_worker  | FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+stl_worker  | WHERE pg_catalog.pg_class.relname = $1::VARCHAR AND pg_catalog.pg_class.relkind = ANY (ARRAY[$2::VARCHAR, $3::VARCHAR, $4::VARCHAR, $5::VARCHAR, $6::VARCHAR]) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != $7::VARCHAR
+stl_worker  | 2026-08-11 18:12:35,780 INFO sqlalchemy.engine.Engine [cached since 0.05711s ago] ('models_3d', 'r', 'p', 'f', 'v', 'm', 'pg_catalog')
+stl_worker  | 2026-08-11 18:12:35,790 INFO sqlalchemy.engine.Engine SELECT pg_catalog.pg_class.relname 
+stl_worker  | FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+stl_worker  | WHERE pg_catalog.pg_class.relname = $1::VARCHAR AND pg_catalog.pg_class.relkind = ANY (ARRAY[$2::VARCHAR, $3::VARCHAR, $4::VARCHAR, $5::VARCHAR, $6::VARCHAR]) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != $7::VARCHAR
+stl_worker  | 2026-08-11 18:12:35,790 INFO sqlalchemy.engine.Engine [cached since 0.06705s ago] ('processing_jobs', 'r', 'p', 'f', 'v', 'm', 'pg_catalog')
+stl_worker  | 2026-08-11 18:12:35,806 INFO sqlalchemy.engine.Engine SELECT pg_catalog.pg_class.relname 
+stl_worker  | FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+stl_worker  | WHERE pg_catalog.pg_class.relname = $1::VARCHAR AND pg_catalog.pg_class.relkind = ANY (ARRAY[$2::VARCHAR, $3::VARCHAR, $4::VARCHAR, $5::VARCHAR, $6::VARCHAR]) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != $7::VARCHAR
+stl_worker  | 2026-08-11 18:12:35,806 INFO sqlalchemy.engine.Engine [cached since 0.08317s ago] ('app_configs', 'r', 'p', 'f', 'v', 'm', 'pg_catalog')
+stl_worker  | 2026-08-11 18:12:35,827 INFO sqlalchemy.engine.Engine SELECT pg_catalog.pg_type.typname 
+stl_worker  | FROM pg_catalog.pg_type JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_type.typnamespace 
+stl_worker  | WHERE pg_catalog.pg_type.typname = $1::VARCHAR AND pg_catalog.pg_type_is_visible(pg_catalog.pg_type.oid) AND pg_catalog.pg_namespace.nspname != $2::VARCHAR
+stl_worker  | 2026-08-11 18:12:35,827 INFO sqlalchemy.engine.Engine [generated in 0.00043s] ('userrole', 'pg_catalog')
+stl_worker  | 2026-08-11 18:12:35,850 INFO sqlalchemy.engine.Engine SELECT pg_catalog.pg_type.typname 
+stl_worker  | FROM pg_catalog.pg_type JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_type.typnamespace 
+stl_worker  | WHERE pg_catalog.pg_type.typname = $1::VARCHAR AND pg_catalog.pg_type_is_visible(pg_catalog.pg_type.oid) AND pg_catalog.pg_namespace.nspname != $2::VARCHAR
+stl_worker  | 2026-08-11 18:12:35,853 INFO sqlalchemy.engine.Engine [cached since 0.02598s ago] ('detaillevel', 'pg_catalog')
+stl_worker  | 2026-08-11 18:12:35,872 INFO sqlalchemy.engine.Engine SELECT pg_catalog.pg_type.typname 
+stl_worker  | FROM pg_catalog.pg_type JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_type.typnamespace 
+stl_worker  | WHERE pg_catalog.pg_type.typname = $1::VARCHAR AND pg_catalog.pg_type_is_visible(pg_catalog.pg_type.oid) AND pg_catalog.pg_namespace.nspname != $2::VARCHAR
+stl_worker  | 2026-08-11 18:12:35,872 INFO sqlalchemy.engine.Engine [cached since 0.04552s ago] ('printtype', 'pg_catalog')
+stl_worker  | 2026-08-11 18:12:35,889 INFO sqlalchemy.engine.Engine SELECT pg_catalog.pg_type.typname 
+stl_worker  | FROM pg_catalog.pg_type JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_type.typnamespace 
+stl_worker  | WHERE pg_catalog.pg_type.typname = $1::VARCHAR AND pg_catalog.pg_type_is_visible(pg_catalog.pg_type.oid) AND pg_catalog.pg_namespace.nspname != $2::VARCHAR
+stl_worker  | 2026-08-11 18:12:35,889 INFO sqlalchemy.engine.Engine [cached since 0.06252s ago] ('processingstatus', 'pg_catalog')
+stl_worker  | 2026-08-11 18:12:35,903 INFO sqlalchemy.engine.Engine SELECT pg_catalog.pg_type.typname 
+stl_worker  | FROM pg_catalog.pg_type JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_type.typnamespace 
+stl_worker  | WHERE pg_catalog.pg_type.typname = $1::VARCHAR AND pg_catalog.pg_type_is_visible(pg_catalog.pg_type.oid) AND pg_catalog.pg_namespace.nspname != $2::VARCHAR
+stl_worker  | 2026-08-11 18:12:35,904 INFO sqlalchemy.engine.Engine [cached since 0.0772s ago] ('jobtype', 'pg_catalog')
+stl_worker  | 2026-08-11 18:12:35,918 INFO sqlalchemy.engine.Engine SELECT pg_catalog.pg_type.typname 
+stl_worker  | FROM pg_catalog.pg_type JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_type.typnamespace 
+stl_worker  | WHERE pg_catalog.pg_type.typname = $1::VARCHAR AND pg_catalog.pg_type_is_visible(pg_catalog.pg_type.oid) AND pg_catalog.pg_namespace.nspname != $2::VARCHAR
+stl_worker  | 2026-08-11 18:12:35,918 INFO sqlalchemy.engine.Engine [cached since 0.09104s ago] ('jobstatus', 'pg_catalog')
+stl_worker  | 2026-08-11 18:12:35,927 INFO sqlalchemy.engine.Engine COMMIT
+stl_worker  | 18:12:35:  36.76s â†’ cron:cron_crawl_history() delayed=35.82s
+stl_worker  | 2026-08-11 18:12:35,948 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+stl_worker  | 2026-08-11 18:12:35,951 INFO sqlalchemy.engine.Engine SELECT source_groups.id, source_groups.chat_id, source_groups.name, source_groups.username, source_groups.is_active, source_groups.model_count, source_groups.last_message_id, source_groups.oldest_message_id, source_groups.created_at 
+stl_worker  | FROM source_groups 
+stl_worker  | WHERE source_groups.is_active = true
+stl_worker  | 2026-08-11 18:12:35,951 INFO sqlalchemy.engine.Engine [generated in 0.00026s] ()
+stl_worker  | 2026-08-11 18:12:35,987 INFO sqlalchemy.engine.Engine ROLLBACK
+stl_worker  | 18:12:35:   0.05s â†� cron:cron_crawl_history â—� 
+stl_worker  | 18:12:55:   0.04s â†’ cbb3eb125524420980049a04fa7556ca:process_manual_upload(filepath='/app/temp/manual_293534e7-7e76-4b63-9055-efafaa028792_Spiderman+Bookmâ€¦)
+stl_worker  | 2026-08-11 18:12:55,991 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+stl_worker  | 2026-08-11 18:12:56,068 INFO sqlalchemy.engine.Engine SELECT models_3d.id, models_3d.original_filename, models_3d.file_extension, models_3d.file_size_bytes, models_3d.telegram_file_id, models_3d.telegram_message_id, models_3d.source_group_id, models_3d.telegram_message_text, models_3d.vertex_count, models_3d.face_count, models_3d.part_count, models_3d.detail_level, models_3d.bbox_x_mm, models_3d.bbox_y_mm, models_3d.bbox_z_mm, models_3d.volume_mm3, models_3d.thumbnail_path, models_3d.predicted_name, models_3d.ai_category, models_3d.ai_print_type, models_3d.ai_keywords, models_3d.ai_raw_response, models_3d.processing_status, models_3d.processing_error, models_3d.processing_retries, models_3d.created_at, models_3d.updated_at 
+stl_worker  | FROM models_3d 
+stl_worker  | WHERE models_3d.id = $1::UUID
+stl_worker  | 2026-08-11 18:12:56,068 INFO sqlalchemy.engine.Engine [generated in 0.00030s] ('293534e7-7e76-4b63-9055-efafaa028792',)
+stl_worker  | 2026-08-11 18:12:56,098 INFO sqlalchemy.engine.Engine UPDATE models_3d SET processing_status=$1::processingstatus, processing_retries=$2::INTEGER, updated_at=$3::TIMESTAMP WITHOUT TIME ZONE WHERE models_3d.id = $4::UUID
+stl_worker  | 2026-08-11 18:12:56,098 INFO sqlalchemy.engine.Engine [generated in 0.00031s] ('processing', 1, datetime.datetime(2026, 8, 11, 18, 12, 56, 98337), UUID('293534e7-7e76-4b63-9055-efafaa028792'))
+stl_worker  | 2026-08-11 18:12:56,106 INFO sqlalchemy.engine.Engine COMMIT
+stl_worker  | 2026-08-11 18:12:56,139 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+stl_worker  | 2026-08-11 18:12:56,140 INFO sqlalchemy.engine.Engine UPDATE models_3d SET processing_status=$1::processingstatus, processing_error=$2::VARCHAR, updated_at=$3::TIMESTAMP WITHOUT TIME ZONE WHERE models_3d.id = $4::UUID
+stl_worker  | 2026-08-11 18:12:56,140 INFO sqlalchemy.engine.Engine [generated in 0.00027s] ('failed', 'No .stl or .obj files found in the archive.', datetime.datetime(2026, 8, 11, 18, 12, 56, 140285), UUID('293534e7-7e76-4b63-9055-efafaa028792'))
+stl_worker  | 2026-08-11 18:12:56,151 INFO sqlalchemy.engine.Engine COMMIT
+stl_worker  | 18:12:56:   0.17s â†� cbb3eb125524420980049a04fa7556ca:process_manual_upload â—� 
+stl_worker  | 18:14:00:   1.00s â†’ cron:cron_crawl_history()
+stl_worker  | 2026-08-11 18:14:00,154 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+stl_worker  | 2026-08-11 18:14:00,154 INFO sqlalchemy.engine.Engine SELECT source_groups.id, source_groups.chat_id, source_groups.name, source_groups.username, source_groups.is_active, source_groups.model_count, source_groups.last_message_id, source_groups.oldest_message_id, source_groups.created_at 
+stl_worker  | FROM source_groups 
+stl_worker  | WHERE source_groups.is_active = true
+stl_worker  | 2026-08-11 18:14:00,155 INFO sqlalchemy.engine.Engine [cached since 84.2s ago] ()
+stl_worker  | 2026-08-11 18:14:00,192 INFO sqlalchemy.engine.Engine ROLLBACK
+stl_worker  | 18:14:00:   0.05s â†� cron:cron_crawl_history â—� 

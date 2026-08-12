@@ -19,6 +19,7 @@ export interface Model3D {
   ai_category?: string;
   ai_print_type?: string;
   processing_status: string;
+  processing_logs?: any[];
   tags?: { id: number; name: string; slug: string }[];
 }
 

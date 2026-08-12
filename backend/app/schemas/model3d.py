@@ -50,6 +50,8 @@ class Model3DOut(BaseModel):
 
     # Status
     processing_status: ProcessingStatus
+    processing_error: Optional[str] = None
+    processing_logs: Optional[List[dict]] = None
 
     # Relations
     tags: List[TagOut] = []

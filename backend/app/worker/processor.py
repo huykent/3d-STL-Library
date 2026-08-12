@@ -30,6 +30,28 @@ from app.telegram.downloader import download_telegram_document, extract_3d_files
 
 logger = logging.getLogger(__name__)
 
+from datetime import datetime
+from sqlalchemy.ext.asyncio import AsyncSession
+
+async def _add_log(session: AsyncSession, model: Model3D, step: str, message: str, path: str = None) -> None:
+    """Helper to append a processing log and commit immediately."""
+    from datetime import datetime
+    log_entry = {
+        "step": step,
+        "message": message,
+        "time": datetime.utcnow().isoformat()
+    }
+    if path:
+        log_entry["path"] = path
+    
+    current_logs = model.processing_logs or []
+    current_logs.append(log_entry)
+    # SQLAlchemy requires assigning a new list object to detect JSONB mutation
+    model.processing_logs = list(current_logs)
+    
+    logger.info(f"[{model.id}] {step}: {message}")
+    await session.commit()
+
 
 async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> None:
     """arq task: download and process a Telegram 3D model message.
@@ -95,13 +117,15 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
             tmp_dir = settings.TEMP_DIR
             os.makedirs(tmp_dir, exist_ok=True)
 
+            await _add_log(session, model, "Tải file", "Bắt đầu tải file từ Telegram...")
             tmp_file = await download_telegram_document(
                 telegram_client, tg_message, save_dir=tmp_dir
             )
-            logger.info(f"Downloaded temp file for model {model.id}: {tmp_file}")
+            await _add_log(session, model, "Tải file", f"Tải thành công file tạm", path=tmp_file)
 
             # ── Step 1.5: Extract archive if needed ───────────────────────
             extract_dir = os.path.join(tmp_dir, f"ext_{model.id}")
+            await _add_log(session, model, "Xả nén", "Đang kiểm tra và xả nén file...")
             extracted_files = await extract_3d_files(tmp_file, extract_dir)
             
             if not extracted_files:
@@ -111,35 +135,34 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
                 
             # Process the first valid 3D file found
             target_3d_file = extracted_files[0]
-            logger.info(f"[{model.id}] Target 3D file for analysis: {target_3d_file}")
+            await _add_log(session, model, "Xả nén", "Tìm thấy file 3D để phân tích", path=target_3d_file)
 
             # ── Step 2: Analyze mesh geometry ─────────────────────────────
+            await _add_log(session, model, "Đo đạc 3D", "Đang đọc lưới tam giác (Mesh) của file 3D...")
             analysis = analyze_mesh(target_3d_file)
-            logger.info(
-                f"[{model.id}] Mesh analysis: "
-                f"{analysis.face_count:,} faces, "
-                f"detail={analysis.detail_level.value}, "
-                f"bbox={analysis.bbox_x_mm:.1f}×{analysis.bbox_y_mm:.1f}×{analysis.bbox_z_mm:.1f}mm"
+            await _add_log(session, model, "Đo đạc 3D", 
+                f"Đo đạc hoàn tất. Số mặt (faces): {analysis.face_count:,}, "
+                f"Kích thước: {analysis.bbox_x_mm:.1f}×{analysis.bbox_y_mm:.1f}×{analysis.bbox_z_mm:.1f}mm."
             )
 
             # ── Step 3: Render thumbnail ───────────────────────────────────
+            await _add_log(session, model, "Thumbnail", "Đang dựng hình và chụp ảnh Thumbnail...")
             thumb_filename = f"{model.id}.png"
             thumb_path = os.path.join(settings.THUMBNAIL_DIR, thumb_filename)
             render_thumbnail(target_3d_file, thumb_path)
-            logger.info(f"[{model.id}] Thumbnail saved: {thumb_path}")
+            await _add_log(session, model, "Thumbnail", "Tạo Thumbnail thành công", path=thumb_path)
 
             # ── Step 4: AI Tagging ────────────────────────────────────────
+            await _add_log(session, model, "AI Tagger", "Gửi dữ liệu và nội dung tin nhắn Telegram cho AI...")
             ai_result = await tag_model(
                 filename=model.original_filename,
                 face_count=analysis.face_count,
                 bbox=(analysis.bbox_x_mm, analysis.bbox_y_mm, analysis.bbox_z_mm),
+                message_text=tg_message.text or "",
             )
-            logger.info(
-                f"[{model.id}] AI tags: "
-                f"name={ai_result.predicted_name!r}, "
-                f"cat={ai_result.category}, "
-                f"type={ai_result.print_type}, "
-                f"keywords={ai_result.keywords}"
+            await _add_log(session, model, "AI Tagger", 
+                f"Phân tích AI hoàn tất. Tên dự đoán: {ai_result.predicted_name}, "
+                f"Loại: {ai_result.print_type}"
             )
 
             # ── Step 5: Persist results to DB ─────────────────────────────
@@ -163,9 +186,8 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
 
             model.processing_status = ProcessingStatus.completed
             model.processing_error = None
-            await session.commit()
             
-            logger.info(f"[{model.id}] Processing completed successfully.")
+            await _add_log(session, model, "Hoàn tất", "Xử lý file thành công!")
 
             # ── Step 6: Upload to Target Group ─────────────────────────────
             from app.services.settings import SettingsService
@@ -191,12 +213,10 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
                     logger.error(f"[{model.id}] Failed to upload to target group: {upload_exc}")
 
         except Exception as exc:
-            logger.error(
-                f"[{model.id}] Pipeline error: {exc}",
-                exc_info=True,
-            )
             model.processing_status = ProcessingStatus.failed
             model.processing_error = str(exc)
+            await _add_log(session, model, "Lỗi hệ thống", f"Tiến trình thất bại: {exc}")
+            logger.error(f"[{model.id}] Pipeline error: {exc}", exc_info=True)
             try:
                 await session.commit()
             except Exception as db_exc:
@@ -208,13 +228,13 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
             if tmp_file and os.path.exists(tmp_file):
                 try:
                     os.unlink(tmp_file)
-                    logger.info(f"[{model.id}] Deleted temp file: {tmp_file}")
+                    await _add_log(session, model, "Dọn dẹp", f"Đã xoá file tạm thời", path=tmp_file)
                 except OSError as e:
                     logger.warning(f"[{model.id}] Could not delete temp file {tmp_file}: {e}")
             if 'extract_dir' in locals() and os.path.exists(extract_dir):
                 try:
                     shutil.rmtree(extract_dir)
-                    logger.info(f"[{model.id}] Deleted extract dir: {extract_dir}")
+                    await _add_log(session, model, "Dọn dẹp", f"Đã dọn dẹp thư mục xả nén", path=extract_dir)
                 except OSError as e:
                     logger.warning(f"[{model.id}] Could not delete extract dir {extract_dir}: {e}")
 
@@ -242,12 +262,14 @@ async def process_manual_upload(ctx: dict, model_id: str, filepath: str) -> None
         
         try:
             # 1. Extract if needed
+            await _add_log(session, model, "Xả nén", "Bắt đầu xả nén file thủ công...")
             extracted_files = await extract_3d_files(filepath, extract_dir)
             if not extracted_files:
                 raise ValueError("No .stl or .obj files found in the archive.")
                 
             model.part_count = len(extracted_files)
             target_3d_file = extracted_files[0]
+            await _add_log(session, model, "Xả nén", "Tìm thấy file 3D để phân tích", path=target_3d_file)
             
             # 2. Upload to Telegram to get telegram_message_id and file_id
             # Fetch TELEGRAM_TARGET_CHAT_ID from settings
@@ -264,7 +286,7 @@ async def process_manual_upload(ctx: dict, model_id: str, filepath: str) -> None
                     raise ValueError("No Telegram Target Chat ID configured.")
                 backup_chat_id = chats[0]
             
-            logger.info(f"[{model.id}] Uploading manual file to Telegram target group {backup_chat_id}...")
+            await _add_log(session, model, "Lưu trữ", f"Đang upload file lên Telegram backup group {backup_chat_id}...")
             tg_message = await telegram_client.send_file(
                 backup_chat_id, 
                 filepath, 
@@ -272,20 +294,34 @@ async def process_manual_upload(ctx: dict, model_id: str, filepath: str) -> None
             )
             model.telegram_message_id = tg_message.id
             model.telegram_file_id = str(tg_message.document.id)
+            await _add_log(session, model, "Lưu trữ", "Upload lên Telegram thành công")
             
             # 3. Analyze Mesh
+            await _add_log(session, model, "Đo đạc 3D", "Đang đọc lưới tam giác (Mesh) của file 3D...")
             analysis = analyze_mesh(target_3d_file)
+            await _add_log(session, model, "Đo đạc 3D", 
+                f"Đo đạc hoàn tất. Số mặt (faces): {analysis.face_count:,}, "
+                f"Kích thước: {analysis.bbox_x_mm:.1f}×{analysis.bbox_y_mm:.1f}×{analysis.bbox_z_mm:.1f}mm."
+            )
             
             # 4. Render Thumbnail
+            await _add_log(session, model, "Thumbnail", "Đang chụp ảnh Thumbnail...")
             thumb_filename = f"{model.id}.png"
             thumb_path = os.path.join(settings.THUMBNAIL_DIR, thumb_filename)
             render_thumbnail(target_3d_file, thumb_path)
+            await _add_log(session, model, "Thumbnail", "Tạo Thumbnail thành công", path=thumb_path)
             
             # 5. Tag with AI
+            await _add_log(session, model, "AI Tagger", "Gửi dữ liệu cho AI phân tích...")
             ai_result = await tag_model(
                 filename=model.original_filename,
                 face_count=analysis.face_count,
                 bbox=(analysis.bbox_x_mm, analysis.bbox_y_mm, analysis.bbox_z_mm),
+                message_text=f"Manual Upload: {model.original_filename}",
+            )
+            await _add_log(session, model, "AI Tagger", 
+                f"Phân tích AI hoàn tất. Tên dự đoán: {ai_result.predicted_name}, "
+                f"Loại: {ai_result.print_type}"
             )
             
             # 6. Update DB
@@ -308,13 +344,14 @@ async def process_manual_upload(ctx: dict, model_id: str, filepath: str) -> None
 
             model.processing_status = ProcessingStatus.completed
             model.processing_error = None
-            await session.commit()
-            logger.info(f"[{model.id}] Manual processing completed successfully.")
+            
+            await _add_log(session, model, "Hoàn tất", "Xử lý file thủ công thành công!")
 
         except Exception as exc:
-            logger.error(f"[{model.id}] Manual pipeline error: {exc}", exc_info=True)
             model.processing_status = ProcessingStatus.failed
             model.processing_error = str(exc)
+            await _add_log(session, model, "Lỗi hệ thống", f"Tiến trình thất bại: {exc}")
+            logger.error(f"[{model.id}] Manual pipeline error: {exc}", exc_info=True)
             try:
                 await session.commit()
             except Exception:
