@@ -38,6 +38,9 @@ class WorkerSettings:
     # Restrict concurrent jobs to save disk space and pacing
     max_jobs = 10
     
+    # Increase timeout to 1 hour (3600s) for large file downloads and extraction
+    job_timeout = 3600
+    
     cron_jobs = [
         cron(cron_crawl_history, minute=set(range(0, 60, 2)))  # Every 2 minutes
     ]
