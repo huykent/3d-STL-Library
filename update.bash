@@ -10,9 +10,10 @@ echo "=========================================="
 echo "1. Pulling latest code from GitHub..."
 git pull origin main
 
-echo "2. Restarting Docker containers..."
+echo "2. Rebuilding Docker images (without cache) and restarting containers..."
 docker compose down
-docker compose up -d --build
+docker compose build --no-cache
+docker compose up -d
 
 echo "=========================================="
 echo "    Update completed successfully!        "
