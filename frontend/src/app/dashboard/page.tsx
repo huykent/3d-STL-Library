@@ -25,12 +25,12 @@ export default function DashboardPage() {
   });
   const [showUploadModal, setShowUploadModal] = useState(false);
 
-  const fetchModels = useCallback(async (currentFilters: FilterValues, currentPage: number, append: boolean = false) => {
+  const fetchModels = useCallback(async (currentFilters: FilterValues, currentPage: number) => {
     try {
       setLoading(true);
       const params = new URLSearchParams();
       params.append('page', currentPage.toString());
-      params.append('page_size', '24');
+      params.append('page_size', '50');
       
       if (currentFilters.search) params.append('search', currentFilters.search);
       if (currentFilters.detail_level) params.append('detail_level', currentFilters.detail_level);
@@ -39,12 +39,7 @@ export default function DashboardPage() {
 
       const response = await api.get(`/models?${params.toString()}`);
       
-      if (append) {
-        setModels(prev => [...prev, ...response.data.items]);
-      } else {
-        setModels(response.data.items);
-      }
-      
+      setModels(response.data.items);
       setTotal(response.data.total);
       setHasNext(response.data.has_next);
     } catch (error) {
@@ -59,7 +54,7 @@ export default function DashboardPage() {
     const currentFilters = { ...filters, search };
     const timer = setTimeout(() => {
       setPage(1);
-      fetchModels(currentFilters, 1, false);
+      fetchModels(currentFilters, 1);
     }, 300);
     return () => clearTimeout(timer);
   }, [filters, search, fetchModels]);
@@ -71,17 +66,17 @@ export default function DashboardPage() {
 
     const interval = setInterval(() => {
       const currentFilters = { ...filters, search };
-      fetchModels(currentFilters, 1, false); // Fetch page 1 again silently
+      fetchModels(currentFilters, page); // Fetch current page again silently
     }, 5000);
 
     return () => clearInterval(interval);
   }, [models, filters, search, fetchModels]);
 
-  const loadMore = () => {
-    if (!loading && hasNext) {
-      const nextPage = page + 1;
-      setPage(nextPage);
-      fetchModels(filters, nextPage, true);
+  const goToPage = (newPage: number) => {
+    if (!loading) {
+      setPage(newPage);
+      fetchModels(filters, newPage);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   };
 
@@ -129,17 +124,23 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {hasNext && (
-        <div className="mt-12 flex justify-center pb-8">
-          <button
-            onClick={loadMore}
-            disabled={loading}
-            className="bg-white/10 hover:bg-white/20 border border-white/20 text-white font-medium py-3 px-8 rounded-full transition-all disabled:opacity-50 hover:shadow-[0_0_20px_rgba(255,255,255,0.1)]"
-          >
-            {loading ? 'Loading...' : 'Load More Models'}
-          </button>
-        </div>
-      )}
+      <div className="mt-12 flex items-center justify-center gap-4 pb-8">
+        <button
+          onClick={() => goToPage(page - 1)}
+          disabled={loading || page === 1}
+          className="bg-white/10 hover:bg-white/20 border border-white/20 text-white font-medium py-2 px-6 rounded-full transition-all disabled:opacity-50 hover:shadow-[0_0_20px_rgba(255,255,255,0.1)]"
+        >
+          Previous
+        </button>
+        <span className="text-gray-400 font-medium">Page {page}</span>
+        <button
+          onClick={() => goToPage(page + 1)}
+          disabled={loading || !hasNext}
+          className="bg-white/10 hover:bg-white/20 border border-white/20 text-white font-medium py-2 px-6 rounded-full transition-all disabled:opacity-50 hover:shadow-[0_0_20px_rgba(255,255,255,0.1)]"
+        >
+          Next
+        </button>
+      </div>
 
       {showUploadModal && (
         <UploadModal onClose={() => setShowUploadModal(false)} />

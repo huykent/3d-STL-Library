@@ -51,6 +51,7 @@ services:
       - REFRESH_TOKEN_EXPIRE_DAYS=${REFRESH_TOKEN_EXPIRE_DAYS:-7}
       - THUMBNAIL_DIR=/app/thumbnails
       - TEMP_DIR=/app/temp
+      - TELEGRAM_TARGET_CHAT_ID=${TELEGRAM_TARGET_CHAT_ID}
     ports:
       - "8000:8000"
     volumes:
@@ -81,6 +82,7 @@ services:
       - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2:3b}
       - THUMBNAIL_DIR=/app/thumbnails
       - TEMP_DIR=/app/temp
+      - TELEGRAM_TARGET_CHAT_ID=${TELEGRAM_TARGET_CHAT_ID}
     volumes:
       - app_thumbnails:/app/thumbnails
       - app_temp:/app/temp

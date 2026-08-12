@@ -21,7 +21,7 @@ router = APIRouter()
 
 def _build_query(filters: FilterParams):
     """Build a SELECT statement from filter params."""
-    stmt = select(Model3D).options(selectinload(Model3D.tags))
+    stmt = select(Model3D).options(selectinload(Model3D.tags)).order_by(Model3D.created_at.desc())
 
     if filters.search:
         term = f"%{filters.search}%"
@@ -60,7 +60,7 @@ async def list_models(
     min_face_count: Optional[int] = Query(None),
     max_face_count: Optional[int] = Query(None),
     page: int = Query(1, ge=1),
-    page_size: int = Query(24, ge=1, le=100),
+    page_size: int = Query(50, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ) -> Model3DList:
@@ -95,6 +95,10 @@ async def list_models(
         out = Model3DOut.model_validate(m)
         if m.thumbnail_path:
             out.thumbnail_url = f"/api/models/{m.id}/thumbnail"
+        
+        if m.image_paths:
+            out.image_urls = [f"/api/models/{m.id}/images/{i}" for i in range(len(m.image_paths))]
+        
         items.append(out)
 
     has_next = (filters.offset + filters.page_size) < total
@@ -129,6 +133,10 @@ async def get_model(
     out = Model3DOut.model_validate(model)
     if model.thumbnail_path:
         out.thumbnail_url = f"/api/models/{model.id}/thumbnail"
+        
+    if model.image_paths:
+        out.image_urls = [f"/api/models/{model.id}/images/{i}" for i in range(len(model.image_paths))]
+        
     return out
 
 
@@ -158,6 +166,36 @@ async def get_thumbnail(
     if not os.path.isfile(full_path):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thumbnail file not found")
 
+    return FileResponse(full_path, media_type="image/png")
+
+
+@router.get(
+    "/{model_id}/images/{index}",
+    summary="Serve an album image for a model",
+    response_class=FileResponse,
+)
+async def get_album_image(
+    model_id: uuid.UUID,
+    index: int,
+    db: AsyncSession = Depends(get_db),
+):
+    import os
+    result = await db.execute(
+        select(Model3D.image_paths).where(Model3D.id == model_id)
+    )
+    image_paths = result.scalar_one_or_none()
+    
+    if image_paths is None:
+        raise HTTPException(status_code=404, detail="Model not found")
+        
+    if not image_paths or index < 0 or index >= len(image_paths):
+        raise HTTPException(status_code=404, detail="Image not found")
+        
+    full_path = os.path.join(get_settings().THUMBNAIL_DIR, image_paths[index])
+    
+    if not os.path.exists(full_path):
+        raise HTTPException(status_code=404, detail="Image file not found")
+        
     return FileResponse(full_path, media_type="image/png")
 
 
