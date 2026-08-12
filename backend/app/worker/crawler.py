@@ -2,6 +2,7 @@ import logging
 from app.database import AsyncSessionLocal
 from app.models.source_group import SourceGroup
 from sqlalchemy import select
+from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -11,6 +12,14 @@ async def cron_crawl_history(ctx: dict) -> None:
     if not telegram_client or not telegram_client.is_connected():
         logger.warning("Telegram client not connected. Skipping crawl.")
         return
+
+    from app.services.settings import SettingsService
+    history_days_str = await SettingsService.get_setting("CRAWL_HISTORY_DAYS")
+    if not history_days_str or int(history_days_str) <= 0:
+        return  # Auto-history crawling is disabled if 0 or not set
+
+    history_days = int(history_days_str)
+    target_date = datetime.now(timezone.utc) - timedelta(days=history_days)
 
     redis = ctx.get("redis")
     
@@ -52,8 +61,16 @@ async def cron_crawl_history(ctx: dict) -> None:
                             file_ext = attribute.file_name.split('.')[-1].lower()
                             break
                             
-                    if file_ext in ['stl', 'obj', 'zip', 'rar']:
+                    if file_ext in ['stl', 'obj', '3mf', 'pm7m', 'pwscene', 'zip', 'rar']:
                         logger.info(f"Found historical 3D file: {message.id} in {chat_id}")
+                        
+                        # Check date constraint
+                        if message.date and message.date < target_date:
+                            logger.info(f"Message {message.id} is older than {history_days} days. Skipping.")
+                            # Optionally, if messages are strictly ordered by date, we could break completely,
+                            # but older messages might be mixed. Usually they are ordered.
+                            continue
+
                         # Enqueue job
                         await redis.enqueue_job(
                             'process_telegram_message', 
@@ -70,3 +87,44 @@ async def cron_crawl_history(ctx: dict) -> None:
                 
             except Exception as e:
                 logger.error(f"Failed to crawl history for group {chat_id}: {e}")
+
+async def manual_crawl_history(ctx: dict, chat_id: int, limit: int = 1) -> None:
+    """Arq task to manually trigger a history crawl for a specific group."""
+    telegram_client = ctx.get("telegram_client")
+    if not telegram_client or not telegram_client.is_connected():
+        logger.warning("Telegram client not connected. Skipping manual crawl.")
+        return
+
+    redis = ctx.get("redis")
+    
+    logger.info(f"Starting MANUAL crawl for group {chat_id}, limit={limit}")
+    
+    try:
+        messages = await telegram_client.get_messages(chat_id, limit=limit * 10) # Fetch more to find enough files
+        files_queued = 0
+        
+        for message in messages:
+            if files_queued >= limit:
+                break
+                
+            if not message.document:
+                continue
+                
+            file_ext = ""
+            for attribute in message.document.attributes:
+                if hasattr(attribute, 'file_name'):
+                    file_ext = attribute.file_name.split('.')[-1].lower()
+                    break
+                    
+            if file_ext in ['stl', 'obj', '3mf', 'pm7m', 'pwscene', 'zip', 'rar']:
+                logger.info(f"[MANUAL CRAWL] Found 3D file: {message.id} in {chat_id}")
+                await redis.enqueue_job(
+                    'process_telegram_message', 
+                    message_id=message.id,
+                    chat_id=chat_id
+                )
+                files_queued += 1
+                
+        logger.info(f"[MANUAL CRAWL] Finished. Queued {files_queued} files.")
+    except Exception as e:
+        logger.error(f"[MANUAL CRAWL] Failed for group {chat_id}: {e}")

@@ -26,11 +26,11 @@ async def shutdown(ctx):
     if client:
         await client.disconnect()
 
-from app.worker.crawler import cron_crawl_history
+from app.worker.crawler import cron_crawl_history, manual_crawl_history
 from arq import cron
 
 class WorkerSettings:
-    functions = [process_telegram_message, process_manual_upload]
+    functions = [process_telegram_message, process_manual_upload, manual_crawl_history]
     on_startup = startup
     on_shutdown = shutdown
     redis_settings = RedisSettings.from_dsn(get_settings().REDIS_URL)

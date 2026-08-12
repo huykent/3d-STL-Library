@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { getSettings, updateSettings, restartTelegram, verifyOtp, sendCode } from '@/lib/api';
+import { getSettings, updateSettings, restartTelegram, verifyOtp, sendCode, triggerManualCrawl } from '@/lib/api';
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -23,6 +23,10 @@ export default function SettingsPage() {
   const [otpHash, setOtpHash] = useState('');
   const [otpPassword, setOtpPassword] = useState('');
   const [needsPassword, setNeedsPassword] = useState(false);
+
+  // Manual Crawl State
+  const [manualChatId, setManualChatId] = useState('');
+  const [crawling, setCrawling] = useState(false);
 
   useEffect(() => {
     fetchSettings();
@@ -110,6 +114,23 @@ export default function SettingsPage() {
       setMessage('Telegram client restarted successfully!');
     } catch (error: any) {
       setMessage('Failed to restart Telegram client: ' + (error.response?.data?.detail || error.message));
+    }
+  };
+
+  const handleManualCrawl = async () => {
+    if (!manualChatId) {
+       setMessage('Please enter a Chat ID to crawl.');
+       return;
+    }
+    setCrawling(true);
+    setMessage('Triggering manual crawl...');
+    try {
+      await triggerManualCrawl({ chat_id: parseInt(manualChatId), limit: 1 });
+      setMessage(`Successfully queued manual crawl for ${manualChatId}. Check worker logs.`);
+    } catch (error: any) {
+      setMessage('Failed to trigger manual crawl: ' + (error.response?.data?.detail || error.message));
+    } finally {
+      setCrawling(false);
     }
   };
 
@@ -202,6 +223,17 @@ export default function SettingsPage() {
                 className="bg-[#0d1117] border-white/10 text-white"
               />
             </div>
+            <div className="space-y-2 md:col-span-2">
+              <label className="text-sm font-medium text-gray-300">Auto-Crawl History (Days)</label>
+              <Input
+                type="number"
+                value={settings.CRAWL_HISTORY_DAYS || '0'}
+                onChange={(e) => handleChange('CRAWL_HISTORY_DAYS', e.target.value)}
+                placeholder="0"
+                className="bg-[#0d1117] border-white/10 text-white"
+              />
+              <p className="text-xs text-gray-400">Set to 0 to only process NEW files. Set to 7 to crawl files from the last 7 days automatically (slow drip feed).</p>
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -251,6 +283,36 @@ export default function SettingsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Manual Debug Trigger */}
+      <Card className="bg-[#1c2128] border-white/10">
+        <CardHeader>
+          <CardTitle className="text-xl text-white">Manual Debug Crawl</CardTitle>
+          <CardDescription>Manually trigger a 1-file crawl from a specific group for debugging purposes.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex gap-4 items-end">
+            <div className="space-y-2 flex-1 max-w-sm">
+              <label className="text-sm font-medium text-gray-300">Chat ID to Crawl</label>
+              <Input
+                type="text"
+                value={manualChatId}
+                onChange={(e) => setManualChatId(e.target.value)}
+                placeholder="e.g. -100123456789"
+                className="bg-[#0d1117] border-white/10 text-white"
+              />
+            </div>
+            <Button
+              onClick={handleManualCrawl}
+              disabled={crawling}
+              className="bg-purple-600 hover:bg-purple-700 text-white"
+            >
+              {crawling && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              Run Manual Crawl (1 File)
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* AI Settings */}
       <Card className="bg-[#1c2128] border-white/10">

@@ -147,6 +147,32 @@ async def restart_crawler_api(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+class ManualCrawlRequest(BaseModel):
+    chat_id: int
+    limit: Optional[int] = 1
+
+@router.post(
+    "/telegram/crawl-history",
+    summary="Manually trigger a history crawl for a group (admin only)",
+)
+async def manual_crawl_history_api(
+    body: ManualCrawlRequest,
+    _admin: User = Depends(get_current_active_admin),
+):
+    try:
+        from app.worker.queue import get_redis_pool
+        redis = await get_redis_pool()
+        await redis.enqueue_job(
+            'manual_crawl_history', 
+            chat_id=body.chat_id, 
+            limit=body.limit
+        )
+        return {"status": "success", "message": f"Queued manual crawl for group {body.chat_id}"}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
 class SendCodeRequest(BaseModel):
     phone: str
 
