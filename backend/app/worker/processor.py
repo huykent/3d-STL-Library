@@ -192,6 +192,9 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
             # ── Step 6: Upload to Target Group ─────────────────────────────
             from app.services.settings import SettingsService
             target_chat_str = await SettingsService.get_setting("TELEGRAM_TARGET_CHAT_ID")
+            if not target_chat_str:
+                target_chat_str = settings.TELEGRAM_TARGET_CHAT_ID
+                
             if target_chat_str and tmp_file and os.path.exists(tmp_file):
                 try:
                     target_chat_id = int(target_chat_str.strip())
@@ -202,12 +205,15 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
                         f"📏 **Size:** {model.bbox_x_mm:.1f} × {model.bbox_y_mm:.1f} × {model.bbox_z_mm:.1f} mm\n"
                         f"🏷️ **Tags:** {model.ai_keywords}\n"
                     )
-                    await telegram_client.send_file(
+                    tg_msg = await telegram_client.send_file(
                         target_chat_id, 
                         tmp_file, 
                         thumb=thumb_path if os.path.exists(thumb_path) else None,
                         caption=caption
                     )
+                    model.telegram_message_id = tg_msg.id
+                    model.telegram_file_id = str(tg_msg.document.id)
+                    await session.commit()
                     logger.info(f"[{model.id}] Successfully backed up file to target group {target_chat_id}")
                 except Exception as upload_exc:
                     logger.error(f"[{model.id}] Failed to upload to target group: {upload_exc}")

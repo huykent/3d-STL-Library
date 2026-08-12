@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     # JSON-decoding it before our validator runs. Parsed to List[int] by
     # the field_validator below. Tests access .TELEGRAM_CHAT_IDS and get List[int].
     TELEGRAM_CHAT_IDS: str = ""
+    TELEGRAM_TARGET_CHAT_ID: str = ""
 
     # Ollama
     OLLAMA_BASE_URL: str
