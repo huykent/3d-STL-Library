@@ -68,6 +68,19 @@ def analyze_mesh(file_path: str) -> MeshAnalysis:
         ValueError: If the file cannot be loaded as a valid mesh.
         FileNotFoundError: If file_path does not exist.
     """
+    ext = file_path.split('.')[-1].lower()
+    if ext in ['pm7m', 'pwscene']:
+        # Proprietary slicer/scene files cannot be parsed by trimesh.
+        return MeshAnalysis(
+            face_count=0,
+            vertex_count=0,
+            detail_level=DetailLevel.resin_ready,
+            bbox_x_mm=0.0,
+            bbox_y_mm=0.0,
+            bbox_z_mm=0.0,
+            volume_mm3=0.0,
+        )
+
     loaded = trimesh.load(file_path, force="mesh")
 
     if isinstance(loaded, trimesh.Scene):

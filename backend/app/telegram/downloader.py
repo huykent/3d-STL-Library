@@ -9,7 +9,7 @@ async def extract_3d_files(file_path: str, extract_dir: str) -> list[str]:
     """
     file_ext = file_path.split('.')[-1].lower()
     
-    if file_ext in ['stl', 'obj']:
+    if file_ext in ['stl', 'obj', '3mf', 'pm7m', 'pwscene']:
         return [file_path]
         
     os.makedirs(extract_dir, exist_ok=True)
@@ -18,12 +18,18 @@ async def extract_3d_files(file_path: str, extract_dir: str) -> list[str]:
     await asyncio.to_thread(patoolib.extract_archive, file_path, outdir=extract_dir, verbosity=-1)
     
     extracted_3d_files = []
+    all_files_found = []
     for root, _, files in os.walk(extract_dir):
         for file in files:
+            all_files_found.append(file)
             ext = file.split('.')[-1].lower()
-            if ext in ['stl', 'obj']:
+            if ext in ['stl', 'obj', '3mf', 'pm7m', 'pwscene']:
                 extracted_3d_files.append(os.path.join(root, file))
                 
+    if not extracted_3d_files:
+        import logging
+        logging.getLogger(__name__).warning(f"No 3D files found. Files in archive: {all_files_found}")
+        
     return extracted_3d_files
 
 async def download_telegram_document(client, message, save_dir: str) -> str:

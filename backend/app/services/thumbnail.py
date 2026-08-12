@@ -40,6 +40,22 @@ def render_thumbnail(
     Raises:
         RuntimeError: If rendering fails.
     """
+    from PIL import Image, ImageDraw, ImageFont
+    
+    ext = mesh_path.split('.')[-1].lower()
+    if ext in ['pm7m', 'pwscene']:
+        # Cannot render proprietary formats. Create a generic placeholder.
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        img = Image.new('RGB', size, color=(30, 34, 40))
+        draw = ImageDraw.Draw(img)
+        # Just draw a simple text or shape
+        text = f"{ext.upper()} File"
+        # We don't have a guaranteed font, so we'll just draw a rectangle and let it be blank
+        draw.rectangle([size[0]*0.2, size[1]*0.4, size[0]*0.8, size[1]*0.6], fill=(50, 60, 75))
+        img.save(output_path)
+        logger.info(f"Generic thumbnail saved: {output_path}")
+        return output_path
+
     import pyrender  # lazy import so EGL env var is set first (Linux)
 
     # ── Load mesh ────────────────────────────────────────────────

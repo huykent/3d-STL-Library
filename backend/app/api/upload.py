@@ -41,7 +41,7 @@ async def upload_model_api(
         raise HTTPException(status_code=400, detail="No filename provided")
 
     file_ext = file.filename.split('.')[-1].lower() if '.' in file.filename else ''
-    valid_exts = {'stl', 'obj', 'zip', 'rar'}
+    valid_exts = {'stl', 'obj', '3mf', 'pm7m', 'pwscene', 'zip', 'rar'}
     if file_ext not in valid_exts:
         raise HTTPException(status_code=400, detail=f"Invalid file extension. Allowed: {valid_exts}")
 

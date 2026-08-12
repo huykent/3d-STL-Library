@@ -129,7 +129,7 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
             extracted_files = await extract_3d_files(tmp_file, extract_dir)
             
             if not extracted_files:
-                raise ValueError("No .stl or .obj files found in the archive.")
+                raise ValueError("No .stl, .obj, .3mf, .pm7m or .pwscene files found in the archive.")
                 
             model.part_count = len(extracted_files)
                 
@@ -265,7 +265,7 @@ async def process_manual_upload(ctx: dict, model_id: str, filepath: str) -> None
             await _add_log(session, model, "Xả nén", "Bắt đầu xả nén file thủ công...")
             extracted_files = await extract_3d_files(filepath, extract_dir)
             if not extracted_files:
-                raise ValueError("No .stl or .obj files found in the archive.")
+                raise ValueError("No .stl, .obj, .3mf, .pm7m or .pwscene files found in the archive.")
                 
             model.part_count = len(extracted_files)
             target_3d_file = extracted_files[0]
