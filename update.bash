@@ -8,12 +8,17 @@ echo "    Updating 3D STL Library Server        "
 echo "=========================================="
 
 echo "1. Pulling latest code from GitHub..."
-git pull origin main
+OUTPUT=$(git pull origin main)
+echo "$OUTPUT"
 
-echo "2. Rebuilding Docker images (without cache) and restarting containers..."
-docker compose down
-docker compose build --no-cache
-docker compose up -d
+if echo "$OUTPUT" | grep -q "Already up to date."; then
+    echo "No new changes found. Skipping Docker restart."
+else
+    echo "2. Rebuilding Docker images (without cache) and restarting containers..."
+    docker compose down
+    docker compose build --no-cache
+    docker compose up -d
+fi
 
 echo "=========================================="
 echo "    Update completed successfully!        "
