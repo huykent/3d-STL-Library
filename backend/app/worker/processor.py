@@ -221,26 +221,53 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
             else:
                 await _add_log(session, model, "Album", "Không tìm thấy ảnh demo nào đi kèm.")
 
-            # ── Step 4: AI Tagging ────────────────────────────────────────
-            await _add_log(session, model, "AI Tagger", "Gửi dữ liệu và nội dung tin nhắn Telegram cho AI...")
-            
+            # ── Step 4: Phân loại / AI Tagging ────────────────────────────
             message_text = tg_message.text or ""
             if not message_text and related_image_messages:
                 for img_msg in related_image_messages:
                     if getattr(img_msg, 'text', None):
                         message_text = img_msg.text
                         break
-                        
-            ai_result = await tag_model(
-                filename=model.original_filename,
-                face_count=analysis.face_count,
-                bbox=(analysis.bbox_x_mm, analysis.bbox_y_mm, analysis.bbox_z_mm),
-                message_text=message_text,
-            )
-            await _add_log(session, model, "AI Tagger", 
-                f"Phân tích AI hoàn tất. Tên dự đoán: {ai_result.predicted_name}, "
-                f"Loại: {ai_result.print_type}"
-            )
+
+            import re
+            hashtags = re.findall(r'#\w+', message_text)
+            
+            if len(hashtags) >= 2 and len(message_text.strip()) > 5:
+                # Bypass AI because we have enough info
+                await _add_log(session, model, "Phân loại", f"Bài viết gốc đã có sẵn {len(hashtags)} hashtags, bỏ qua AI để tiết kiệm thời gian.")
+                cleaned_text = re.sub(r'#\w+', '', message_text).strip()
+                lines = [line.strip() for line in cleaned_text.splitlines() if line.strip()]
+                
+                # Use the first line as name, fallback to original filename
+                predicted_name = lines[0][:100] if lines else model.original_filename.split('.')[0]
+                
+                model.predicted_name = predicted_name
+                model.ai_category = "Uncategorized"
+                model.ai_print_type = PrintType.Unknown
+                model.ai_keywords = ", ".join([h.replace('#', '') for h in hashtags])
+                model.ai_raw_response = "Bypassed AI (Manual parsing)"
+            else:
+                await _add_log(session, model, "AI Tagger", "Gửi dữ liệu và nội dung tin nhắn Telegram cho AI...")
+                
+                ai_result = await tag_model(
+                    filename=model.original_filename,
+                    face_count=analysis.face_count,
+                    bbox=(analysis.bbox_x_mm, analysis.bbox_y_mm, analysis.bbox_z_mm),
+                    message_text=message_text,
+                )
+                await _add_log(session, model, "AI Tagger", 
+                    f"Phân tích AI hoàn tất. Tên dự đoán: {ai_result.predicted_name}, "
+                    f"Loại: {ai_result.print_type}"
+                )
+                
+                model.predicted_name = ai_result.predicted_name
+                model.ai_category = ai_result.category
+                try:
+                    model.ai_print_type = PrintType(ai_result.print_type)
+                except ValueError:
+                    model.ai_print_type = PrintType.Unknown
+                model.ai_keywords = ai_result.keywords
+                model.ai_raw_response = ai_result.raw_response
 
             # ── Step 5: Persist results to DB ─────────────────────────────
             model.vertex_count = analysis.vertex_count
@@ -251,15 +278,6 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
             model.bbox_z_mm = analysis.bbox_z_mm
             model.volume_mm3 = analysis.volume_mm3
             model.thumbnail_path = thumb_filename
-
-            model.predicted_name = ai_result.predicted_name
-            model.ai_category = ai_result.category
-            try:
-                model.ai_print_type = PrintType(ai_result.print_type)
-            except ValueError:
-                model.ai_print_type = PrintType.Unknown
-            model.ai_keywords = ai_result.keywords
-            model.ai_raw_response = ai_result.raw_response
 
             model.processing_status = ProcessingStatus.completed
             model.processing_error = None
