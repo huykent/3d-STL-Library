@@ -53,6 +53,45 @@ async def _add_log(session: AsyncSession, model: Model3D, step: str, message: st
     await session.commit()
 
 
+async def _fetch_related_images(telegram_client, chat_id: int, base_message) -> list:
+    """Fetch images that belong to the same album or are adjacent."""
+    from telethon.tl.types import MessageMediaPhoto
+    
+    images = []
+    try:
+        grouped_id = base_message.grouped_id
+        
+        # We need to fetch messages around the base_message
+        # telethon get_messages offset_id starts from newest, so offset_id=base_message.id+10 gets 20 messages older than it
+        messages = await telegram_client.get_messages(chat_id, limit=20, offset_id=base_message.id + 10)
+        
+        for msg in messages:
+            if msg.id == base_message.id:
+                continue
+                
+            is_image = False
+            if isinstance(msg.media, MessageMediaPhoto):
+                is_image = True
+            elif msg.document and msg.document.mime_type and msg.document.mime_type.startswith('image/'):
+                is_image = True
+                
+            if not is_image:
+                continue
+                
+            if grouped_id and msg.grouped_id == grouped_id:
+                images.append(msg)
+            elif not grouped_id and msg.sender_id == base_message.sender_id:
+                # Check time difference (within 5 minutes)
+                time_diff = abs((msg.date - base_message.date).total_seconds())
+                if time_diff <= 300:
+                    images.append(msg)
+                    
+    except Exception as e:
+        logger.error(f"Error fetching related images: {e}")
+        
+    return images
+
+
 async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> None:
     """arq task: download and process a Telegram 3D model message.
 
@@ -150,15 +189,53 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
             thumb_filename = f"{model.id}.png"
             thumb_path = os.path.join(settings.THUMBNAIL_DIR, thumb_filename)
             render_thumbnail(target_3d_file, thumb_path)
+            model.thumbnail_path = thumb_filename
             await _add_log(session, model, "Thumbnail", "Tạo Thumbnail thành công", path=thumb_path)
+            
+            # ── Step 3.5: Fetch related Telegram Images ───────────────────
+            await _add_log(session, model, "Album", "Đang tìm kiếm ảnh demo đi kèm...")
+            related_image_messages = await _fetch_related_images(telegram_client, chat_id, tg_message)
+            
+            image_paths = []
+            if related_image_messages:
+                await _add_log(session, model, "Album", f"Tìm thấy {len(related_image_messages)} ảnh demo. Đang tải...")
+                for i, img_msg in enumerate(related_image_messages):
+                    try:
+                        ext = '.jpg'
+                        if img_msg.document and img_msg.document.attributes:
+                            for attr in img_msg.document.attributes:
+                                if hasattr(attr, 'file_name') and '.' in attr.file_name:
+                                    ext = '.' + attr.file_name.split('.')[-1]
+                                    break
+                                    
+                        img_filename = f"{model.id}_{i+1}{ext}"
+                        img_path = os.path.join(settings.THUMBNAIL_DIR, img_filename)
+                        await telegram_client.download_media(img_msg, file=img_path)
+                        if os.path.exists(img_path):
+                            image_paths.append(img_filename)
+                    except Exception as e:
+                        logger.error(f"Failed to download related image: {e}")
+                        
+                await _add_log(session, model, "Album", f"Tải thành công {len(image_paths)} ảnh demo.")
+                model.image_paths = image_paths
+            else:
+                await _add_log(session, model, "Album", "Không tìm thấy ảnh demo nào đi kèm.")
 
             # ── Step 4: AI Tagging ────────────────────────────────────────
             await _add_log(session, model, "AI Tagger", "Gửi dữ liệu và nội dung tin nhắn Telegram cho AI...")
+            
+            message_text = tg_message.text or ""
+            if not message_text and related_image_messages:
+                for img_msg in related_image_messages:
+                    if getattr(img_msg, 'text', None):
+                        message_text = img_msg.text
+                        break
+                        
             ai_result = await tag_model(
                 filename=model.original_filename,
                 face_count=analysis.face_count,
                 bbox=(analysis.bbox_x_mm, analysis.bbox_y_mm, analysis.bbox_z_mm),
-                message_text=tg_message.text or "",
+                message_text=message_text,
             )
             await _add_log(session, model, "AI Tagger", 
                 f"Phân tích AI hoàn tất. Tên dự đoán: {ai_result.predicted_name}, "
@@ -205,15 +282,51 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
                         f"📏 **Size:** {model.bbox_x_mm:.1f} × {model.bbox_y_mm:.1f} × {model.bbox_z_mm:.1f} mm\n"
                         f"🏷️ **Tags:** {model.ai_keywords}\n"
                     )
-                    tg_msg = await telegram_client.send_file(
-                        target_chat_id, 
-                        tmp_file, 
-                        thumb=thumb_path if os.path.exists(thumb_path) else None,
-                        caption=caption
-                    )
-                    model.telegram_message_id = tg_msg.id
-                    model.telegram_file_id = str(tg_msg.document.id)
+                    
+                    # Prepare album files
+                    image_files = []
+                    if model.image_paths:
+                        for p in model.image_paths:
+                            full_p = os.path.join(settings.THUMBNAIL_DIR, p)
+                            if os.path.exists(full_p):
+                                image_files.append(full_p)
+                                
+                    if image_files:
+                        await _add_log(session, model, "Upload", f"Đang upload album ({len(image_files)} ảnh) lên nhóm đích: {target_chat_id}...")
+                        
+                        # 1. Send album FIRST with the caption
+                        album_msgs = await telegram_client.send_file(
+                            target_chat_id, 
+                            image_files,
+                            caption=caption
+                        )
+                        
+                        # 2. Send the document SECOND, replying to the album (keeps them grouped nicely)
+                        reply_to_msg_id = album_msgs[0].id if isinstance(album_msgs, list) else album_msgs.id
+                        
+                        await _add_log(session, model, "Upload", f"Đang upload file 3D đính kèm...")
+                        from telethon.tl.types import DocumentAttributeFilename
+                        doc_msg = await telegram_client.send_file(
+                            target_chat_id, 
+                            tmp_file,
+                            reply_to=reply_to_msg_id,
+                            attributes=[DocumentAttributeFilename(file_name=model.original_filename)]
+                        )
+                        model.telegram_message_id = doc_msg.id
+                        model.telegram_file_id = str(doc_msg.document.id) if doc_msg.document else None
+                    else:
+                        await _add_log(session, model, "Upload", f"Đang upload file 3D kèm caption...")
+                        tg_msg = await telegram_client.send_file(
+                            target_chat_id, 
+                            tmp_file, 
+                            thumb=thumb_path if os.path.exists(thumb_path) else None,
+                            caption=caption
+                        )
+                        model.telegram_message_id = tg_msg.id
+                        model.telegram_file_id = str(tg_msg.document.id)
+                        
                     await session.commit()
+                    await _add_log(session, model, "Upload", "Upload thành công lên nhóm đích.")
                     logger.info(f"[{model.id}] Successfully backed up file to target group {target_chat_id}")
                 except Exception as upload_exc:
                     logger.error(f"[{model.id}] Failed to upload to target group: {upload_exc}")
