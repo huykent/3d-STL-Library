@@ -66,6 +66,10 @@ def create_app() -> FastAPI:
     # Auth
     from app.api.auth import router as auth_router
     app.include_router(auth_router, prefix="/api/auth", tags=["Auth"])
+    
+    # Users (AdminCP/UserCP)
+    from app.api.users import router as users_router
+    app.include_router(users_router, prefix="/api/users", tags=["Users"])
 
     # Models
     from app.api.models import router as models_router

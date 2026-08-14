@@ -72,3 +72,16 @@ export const uploadManualFile = (file: File) => {
 // Model Edit API
 export const updateModel = (modelId: string, data: any) => api.put(`/models/${modelId}`, data).then(res => res.data);
 export const deleteModel = (modelId: string) => api.delete(`/models/${modelId}`).then(res => res.data);
+
+// User APIs
+export const getCurrentUser = () => api.get('/users/me').then(res => res.data);
+export const updateCurrentUser = (data: any) => api.put('/users/me', data).then(res => res.data);
+export const getFavorites = () => api.get('/users/me/favorites').then(res => res.data);
+export const addFavorite = (modelId: string) => api.post('/users/me/favorites', { model_id: modelId }).then(res => res.data);
+export const removeFavorite = (modelId: string) => api.delete(`/users/me/favorites/${modelId}`).then(res => res.data);
+export const getHistory = () => api.get('/users/me/history').then(res => res.data);
+export const recordHistory = (modelId: string) => api.post('/users/me/history', { model_id: modelId }).then(res => res.data);
+
+// Admin User APIs
+export const getAdminUsers = () => api.get('/users/admin/list').then(res => res.data);
+export const updateAdminUser = (userId: string, data: any) => api.put(`/users/admin/${userId}`, data).then(res => res.data);

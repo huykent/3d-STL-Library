@@ -171,9 +171,32 @@ export default function ModelDetailPage() {
       <main className="max-w-7xl mx-auto p-4 mt-6">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           
-          {/* Left Column: 3D Viewer */}
-          <div className="lg:col-span-2 h-[600px]">
-            <ModelViewerWrapper modelId={model.id} />
+          {/* Left Column: 3D Viewer & Gallery */}
+          <div className="lg:col-span-2 flex flex-col gap-6">
+            <div className="h-[600px] w-full relative">
+              <ModelViewerWrapper modelId={model.id} />
+            </div>
+            
+            {model.image_urls && model.image_urls.length > 0 && (
+              <Card className="bg-[#1c2128] border-white/10 overflow-hidden">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-lg text-white">Album / Demo Images ({model.image_urls.length})</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex gap-4 overflow-x-auto pb-4 snap-x">
+                    {model.image_urls.map((url, idx) => (
+                      <a href={url} target="_blank" rel="noreferrer" key={idx} className="shrink-0">
+                        <img 
+                          src={url} 
+                          alt={`Demo Image ${idx+1}`} 
+                          className="h-48 w-auto rounded-lg object-contain bg-black/40 border border-white/10 snap-start hover:border-blue-500 transition-colors"
+                        />
+                      </a>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
           </div>
 
           {/* Right Column: Details & Actions */}

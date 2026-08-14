@@ -1,17 +1,16 @@
 # Import order matters: Base first, then models with no deps, then models that ref others
 from app.database import Base
-from app.models.user import User, UserRole
-from app.models.source_group import SourceGroup
-from app.models.tag import Tag, model_tags
-from app.models.model3d import Model3D, DetailLevel, PrintType, ProcessingStatus
-from app.models.processing_job import ProcessingJob, JobType, JobStatus
-from app.models.app_config import AppConfig
+from .app_config import AppConfig
+from .model3d import DetailLevel, Model3D, PrintType, ProcessingStatus
+from .processing_job import JobStatus, ProcessingJob, JobType
+from .source_group import SourceGroup
+from .tag import Tag, model_tags
+from .user import User, UserRole
+from .user_data import UserFavorite, UserDownload
 
 __all__ = [
     "Base",
-    "User", "UserRole",
-    "SourceGroup",
-    "Tag", "model_tags",
+    "AppConfig",
     "Model3D",
     "DetailLevel",
     "PrintType",
@@ -19,5 +18,11 @@ __all__ = [
     "ProcessingJob",
     "JobType",
     "JobStatus",
-    "AppConfig",
+    "SourceGroup",
+    "Tag",
+    "model_tags",
+    "User",
+    "UserRole",
+    "UserFavorite",
+    "UserDownload",
 ]
