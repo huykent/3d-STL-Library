@@ -10,7 +10,9 @@ import { useAuth } from "@/components/AuthProvider";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 
+import Logo from "@/components/Logo";
 import { SearchSuggestions, SuggestionItem } from "@/components/SearchSuggestions";
+
 import { api } from "@/lib/api";
 import { X } from "lucide-react";
 import { useRef, useEffect } from "react";
@@ -176,15 +178,13 @@ export default function DashboardLayout({
         })}
       </div>
     </div>
-  );
-
   const SidebarContent = () => (
     <>
       <div className="p-6">
-        <h1 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-purple-500 tracking-tight">
-          STL Library
-        </h1>
+        <Logo size="md" />
       </div>
+
+
 
       <nav className="flex-1 px-4 py-4 overflow-y-auto">
         {renderNavGroup("Discover", baseNavItems)}

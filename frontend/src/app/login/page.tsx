@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '@/components/AuthProvider';
 import { api } from '@/lib/api';
 
+import Logo from '@/components/Logo';
+
 export default function LoginPage() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -33,9 +35,10 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-900">
       <div className="max-w-md w-full p-8 bg-gray-800 rounded-lg shadow-xl border border-gray-700">
-        <h2 className="text-3xl font-bold text-center text-white mb-8">
-          3D STL Library
-        </h2>
+        <div className="flex justify-center mb-8">
+          <Logo size="lg" />
+        </div>
+
         {error && (
           <div className="bg-red-500/10 border border-red-500/50 text-red-500 px-4 py-3 rounded mb-6">
             {error}
