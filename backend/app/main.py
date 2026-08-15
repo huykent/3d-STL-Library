@@ -20,6 +20,30 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     settings = get_settings()
     logger.info(f"Starting STL Library API | env={settings.APP_ENV}")
     
+    # Auto-seed default admin user if database is empty
+    if settings.APP_ENV != "test":
+        try:
+            from app.database import AsyncSessionLocal
+            from app.models.user import User, UserRole
+            from app.services.auth_service import get_password_hash
+            from sqlalchemy import select
+
+            async with AsyncSessionLocal() as session:
+                res = await session.execute(select(User).where(User.username == "admin"))
+                if not res.scalar_one_or_none():
+                    admin_user = User(
+                        username="admin",
+                        email="admin@example.com",
+                        password_hash=get_password_hash("admin"),
+                        role=UserRole.admin,
+                        is_active=True
+                    )
+                    session.add(admin_user)
+                    await session.commit()
+                    logger.info("Successfully seeded default admin user: admin / admin")
+        except Exception as seed_err:
+            logger.warning(f"Could not seed default admin user on startup: {seed_err}")
+
     from app.telegram.client import start_telegram_client, stop_telegram_client
     from app.telegram.handlers import register_handlers
     
@@ -33,6 +57,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             logger.error(f"Failed to start telegram client: {e}")
             
     yield
+
     
     logger.info("Shutting down STL Library API")
     if settings.APP_ENV != "test" and settings.TELEGRAM_API_ID:
