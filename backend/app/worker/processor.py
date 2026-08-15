@@ -378,6 +378,28 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
             except Exception as db_exc:
                 logger.error(f"[{model.id}] DB commit after failure also failed: {db_exc}")
 
+def _cleanup_orphaned_temp_files(temp_dir: str, max_age_seconds: int = 1800) -> None:
+    """Sweep and remove any temporary files or directories older than max_age_seconds."""
+    import time
+    import shutil
+    if not os.path.exists(temp_dir):
+        return
+
+    now = time.time()
+    for item in os.listdir(temp_dir):
+        item_path = os.path.join(temp_dir, item)
+        try:
+            mtime = os.path.getmtime(item_path)
+            if now - mtime > max_age_seconds:
+                if os.path.isdir(item_path):
+                    shutil.rmtree(item_path, ignore_errors=True)
+                else:
+                    os.unlink(item_path)
+                logger.info(f"Auto-cleaned old temp item: {item_path}")
+        except Exception as e:
+            logger.warning(f"Could not clean temp item {item_path}: {e}")
+
+
         finally:
             # ── ALWAYS delete temp files and extraction dirs ──────────────
             import shutil
@@ -393,6 +415,10 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
                     await _add_log(session, model, "Dọn dẹp", f"Đã dọn dẹp thư mục xả nén", path=extract_dir)
                 except OSError as e:
                     logger.warning(f"[{model.id}] Could not delete extract dir {extract_dir}: {e}")
+
+            # Run a sweep on TEMP_DIR to purge any orphaned leftover temp files
+            _cleanup_orphaned_temp_files(settings.TEMP_DIR)
+
 
 async def process_manual_upload(ctx: dict, model_id: str, filepath: str) -> None:
     """arq task: Process a manually uploaded 3D model."""
