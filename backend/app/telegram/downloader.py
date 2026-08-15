@@ -26,6 +26,9 @@ async def extract_3d_files(file_path: str, extract_dir: str) -> list[str]:
             if ext in ['stl', 'obj', '3mf', 'pm7m', 'pwscene']:
                 extracted_3d_files.append(os.path.join(root, file))
                 
+    # Sort extracted 3D files by file size descending so the main/largest 3D model is selected first
+    extracted_3d_files.sort(key=lambda f: os.path.getsize(f), reverse=True)
+                
     if not extracted_3d_files:
         import logging
         logging.getLogger(__name__).warning(f"No 3D files found. Files in archive: {all_files_found}")

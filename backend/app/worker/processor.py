@@ -54,16 +54,17 @@ async def _add_log(session: AsyncSession, model: Model3D, step: str, message: st
 
 
 async def _fetch_related_images(telegram_client, chat_id: int, base_message) -> list:
-    """Fetch images that belong to the same album or are adjacent."""
+    """Fetch images that belong to the same album or are directly related to base_message."""
     from telethon.tl.types import MessageMediaPhoto
     
     images = []
     try:
         grouped_id = base_message.grouped_id
         
-        # We need to fetch messages around the base_message
-        # telethon get_messages offset_id starts from newest, so offset_id=base_message.id+10 gets 20 messages older than it
+        # We need to fetch messages around the base_message (e.g. 10 messages before and after)
         messages = await telegram_client.get_messages(chat_id, limit=20, offset_id=base_message.id + 10)
+        if not messages:
+            return []
         
         for msg in messages:
             if msg.id == base_message.id:
@@ -78,13 +79,31 @@ async def _fetch_related_images(telegram_client, chat_id: int, base_message) -> 
             if not is_image:
                 continue
                 
-            if grouped_id and msg.grouped_id == grouped_id:
-                images.append(msg)
-            elif not grouped_id and msg.sender_id == base_message.sender_id:
-                # Check time difference (within 5 minutes)
-                time_diff = abs((msg.date - base_message.date).total_seconds())
-                if time_diff <= 300:
+            if grouped_id:
+                # Case 1: base_message belongs to a Telegram Media Group (Album)
+                # ONLY photos sharing the exact same grouped_id belong to this model post.
+                if msg.grouped_id == grouped_id:
                     images.append(msg)
+            else:
+                # Case 2: base_message does NOT have a grouped_id (standalone file)
+                # a) Skip any photo that belongs to a media group (msg.grouped_id is not None)
+                if msg.grouped_id is not None:
+                    continue
+                    
+                # b) Check strict proximity (within 2 message IDs and 60 seconds) or direct reply
+                id_diff = abs(msg.id - base_message.id)
+                time_diff = abs((msg.date - base_message.date).total_seconds())
+                
+                is_reply = (
+                    getattr(msg, 'reply_to_msg_id', None) == base_message.id or
+                    getattr(base_message, 'reply_to_msg_id', None) == msg.id
+                )
+                
+                if is_reply or (id_diff <= 2 and time_diff <= 60 and msg.sender_id == base_message.sender_id):
+                    images.append(msg)
+                    
+        # Sort images by message ID ascending to preserve chronological order
+        images.sort(key=lambda m: m.id)
                     
     except Exception as e:
         logger.error(f"Error fetching related images: {e}")
