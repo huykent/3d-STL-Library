@@ -13,6 +13,7 @@ export interface User {
 
 interface AuthContextType {
   isAuthenticated: boolean;
+  isLoading: boolean;
   token: string | null;
   user: User | null;
   login: (token: string) => void;
@@ -22,6 +23,7 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType>({
   isAuthenticated: false,
+  isLoading: true,
   token: null,
   user: null,
   login: () => {},
@@ -34,6 +36,7 @@ export const useAuth = () => useContext(AuthContext);
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<User | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
   const [isMounted, setIsMounted] = useState(false);
 
   const fetchUser = async (authToken?: string) => {
@@ -44,6 +47,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } catch (error) {
       console.error('Failed to fetch user', error);
       setUser(null);
+      setToken(null);
+      localStorage.removeItem('access_token');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -53,12 +60,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (storedToken) {
       setToken(storedToken);
       fetchUser();
+    } else {
+      setIsLoading(false);
     }
   }, []);
 
   const login = (newToken: string) => {
     localStorage.setItem('access_token', newToken);
     setToken(newToken);
+    setIsLoading(true);
     fetchUser(newToken);
   };
 
@@ -74,7 +84,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ isAuthenticated: !!token, token, user, login, logout, refreshUser: fetchUser }}>
+    <AuthContext.Provider value={{ isAuthenticated: !!token, isLoading, token, user, login, logout, refreshUser: fetchUser }}>
       {children}
     </AuthContext.Provider>
   );

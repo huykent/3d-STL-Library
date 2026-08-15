@@ -47,16 +47,9 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
-  const { user, loading, logout } = useAuth();
+  const { user, logout } = useAuth();
   const router = useRouter();
   const [showUpload, setShowUpload] = useState(false);
-
-  if (!loading && !user) {
-    if (typeof window !== "undefined") {
-      router.push("/login");
-    }
-    return null;
-  }
 
   const baseNavItems = [
     { name: "Gallery", href: "/dashboard", icon: FiGrid },
@@ -121,10 +114,6 @@ export default function DashboardLayout({
       </div>
     </>
   );
-
-  if (loading) {
-    return <div className="min-h-screen bg-[#0a0a0f] flex items-center justify-center"><div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div></div>;
-  }
 
   return (
     <div className="min-h-screen bg-[#0a0a0f] text-gray-100 flex relative overflow-hidden font-sans">
