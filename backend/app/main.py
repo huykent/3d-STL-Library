@@ -23,10 +23,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Auto-seed default admin user if database is empty
     if settings.APP_ENV != "test":
         try:
-            from app.database import AsyncSessionLocal
+            from app.database import AsyncSessionLocal, engine, Base
             from app.models.user import User, UserRole
             from app.services.auth_service import get_password_hash
             from sqlalchemy import select
+
+            # Ensure all DB tables exist
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
 
             async with AsyncSessionLocal() as session:
                 res = await session.execute(select(User).where(User.username == "admin"))
@@ -43,6 +47,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     logger.info("Successfully seeded default admin user: admin / admin")
         except Exception as seed_err:
             logger.warning(f"Could not seed default admin user on startup: {seed_err}")
+
 
     from app.telegram.client import start_telegram_client, stop_telegram_client
     from app.telegram.handlers import register_handlers
