@@ -12,21 +12,43 @@ from typing import AsyncGenerator
 _CHUNK_SIZE = 512 * 1024  # 512 KB
 
 
+import logging
+from typing import AsyncGenerator
+from telethon import TelegramClient
+
+logger = logging.getLogger(__name__)
+
+# Default chunk size: 512 KB — balances memory use and network efficiency
+_CHUNK_SIZE = 512 * 1024  # 512 KB
+
+
 async def stream_file_from_telegram(
-    client,
-    file_id: str,
+    client: TelegramClient,
+    chat_id: int | None = None,
+    message_id: int | None = None,
+    file_id_fallback: str | None = None,
     chunk_size: int = _CHUNK_SIZE,
 ) -> AsyncGenerator[bytes, None]:
     """Async generator that streams a Telegram file by chunk.
 
-    Args:
-        client:     An authenticated Telethon ``TelegramClient`` instance.
-        file_id:    The Telegram ``file_id`` string stored in the database.
-                    Passed directly to ``client.iter_download()``.
-        chunk_size: Size of each yielded byte chunk (default 512 KB).
-
-    Yields:
-        Raw bytes chunks suitable for use in a ``StreamingResponse``.
+    Fetches the message document from Telegram and streams raw bytes chunks.
     """
-    async for chunk in client.iter_download(file_id, chunk_size=chunk_size):
+    if not client.is_connected():
+        await client.connect()
+
+    doc = None
+    if chat_id and message_id:
+        try:
+            msg = await client.get_messages(chat_id, ids=message_id)
+            if msg and msg.document:
+                doc = msg.document
+        except Exception as e:
+            logger.warning(f"Could not fetch message {message_id} in {chat_id}: {e}")
+
+    target = doc or file_id_fallback
+    if not target:
+        raise ValueError("Cannot locate Telegram document to stream")
+
+    async for chunk in client.iter_download(target, chunk_size=chunk_size):
         yield chunk
+

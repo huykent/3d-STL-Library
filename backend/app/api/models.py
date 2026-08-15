@@ -325,20 +325,28 @@ async def download_model(
     from fastapi.responses import StreamingResponse
     from app.telegram.client import get_telegram_client
     from app.services.telegram_storage import stream_file_from_telegram
+    from app.models.source_group import SourceGroup
 
     result = await db.execute(
-        select(Model3D.telegram_file_id, Model3D.original_filename).where(
-            Model3D.id == model_id
-        )
+        select(Model3D, SourceGroup.chat_id)
+        .outerjoin(SourceGroup, Model3D.source_group_id == SourceGroup.id)
+        .where(Model3D.id == model_id)
     )
     row = result.one_or_none()
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Model not found")
 
-    file_id, filename = row
+    model, chat_id = row
 
     client = await get_telegram_client()
-    stream = stream_file_from_telegram(client, file_id)
+    stream = stream_file_from_telegram(
+        client=client, 
+        chat_id=chat_id, 
+        message_id=model.telegram_message_id, 
+        file_id_fallback=model.telegram_file_id
+    )
+
+    filename = model.original_filename or "model.stl"
 
     return StreamingResponse(
         stream,
@@ -347,6 +355,7 @@ async def download_model(
             "Content-Disposition": f'attachment; filename="{filename}"'
         },
     )
+
 
 from app.api.deps import get_current_active_admin
 from app.models.tag import Tag
