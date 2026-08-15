@@ -31,10 +31,14 @@ export default function Logo({ size = 'md', showText = true }: LogoProps) {
             3D STL Library
           </span>
           {size !== 'sm' && (
-            <span className="text-[10px] uppercase tracking-widest text-blue-400/70 font-semibold -mt-1">
-              Automated Hub
-            </span>
+            <div className="flex items-center gap-1.5 -mt-0.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="text-[10px] uppercase tracking-wider text-blue-400/80 font-semibold">
+                v1.2.0 • Live Hub
+              </span>
+            </div>
           )}
+
         </div>
       )}
     </Link>
