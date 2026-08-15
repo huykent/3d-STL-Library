@@ -78,6 +78,7 @@ class FilterParams(BaseModel):
     source_group_id: Optional[int] = None
     min_face_count: Optional[int] = None
     max_face_count: Optional[int] = None
+    sort_by: Optional[str] = "newest"
     page: int = 1
     page_size: int = 24
 

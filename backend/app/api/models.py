@@ -19,29 +19,99 @@ from app.schemas.model3d import FilterParams, Model3DList, Model3DOut
 router = APIRouter()
 
 
-def _build_query(filters: FilterParams):
-    """Build a SELECT statement from filter params."""
-    stmt = select(Model3D).options(selectinload(Model3D.tags)).order_by(Model3D.created_at.desc())
+import re
+from sqlalchemy import or_, and_
 
-    if filters.search:
-        term = f"%{filters.search}%"
-        stmt = stmt.where(
-            Model3D.original_filename.ilike(term)
-            | Model3D.predicted_name.ilike(term)
-            | Model3D.telegram_message_text.ilike(term)
-        )
-    if filters.detail_level:
-        stmt = stmt.where(Model3D.detail_level == filters.detail_level)
-    if filters.ai_category:
-        stmt = stmt.where(Model3D.ai_category == filters.ai_category)
-    if filters.ai_print_type:
-        stmt = stmt.where(Model3D.ai_print_type == filters.ai_print_type)
+def _parse_search_intent(search_str: str, filters: FilterParams):
+    """Extract filter intents embedded in the search query string."""
+    if not search_str:
+        return search_str, filters.detail_level, filters.ai_category, filters.ai_print_type
+
+    text = search_str.strip()
+    detail_level = filters.detail_level
+    ai_category = filters.ai_category
+    ai_print_type = filters.ai_print_type
+
+    # Extract print type intent if not explicitly set
+    if not ai_print_type:
+        if re.search(r'\b(fdm)\b', text, re.IGNORECASE):
+            ai_print_type = PrintType.FDM
+            text = re.sub(r'\b(fdm)\b', '', text, flags=re.IGNORECASE).strip()
+        elif re.search(r'\b(resin)\b', text, re.IGNORECASE):
+            ai_print_type = PrintType.Resin
+            text = re.sub(r'\b(resin)\b', '', text, flags=re.IGNORECASE).strip()
+
+    # Extract detail level intent if not explicitly set
+    if not detail_level:
+        if re.search(r'\b(low[ _-]?poly)\b', text, re.IGNORECASE):
+            detail_level = DetailLevel.low_poly
+            text = re.sub(r'\b(low[ _-]?poly)\b', '', text, flags=re.IGNORECASE).strip()
+        elif re.search(r'\b(medium[ _-]?poly)\b', text, re.IGNORECASE):
+            detail_level = DetailLevel.medium_poly
+            text = re.sub(r'\b(medium[ _-]?poly)\b', '', text, flags=re.IGNORECASE).strip()
+        elif re.search(r'\b(high[ _-]?poly)\b', text, re.IGNORECASE):
+            detail_level = DetailLevel.high_poly
+            text = re.sub(r'\b(high[ _-]?poly)\b', '', text, flags=re.IGNORECASE).strip()
+        elif re.search(r'\b(resin[ _-]?ready)\b', text, re.IGNORECASE):
+            detail_level = DetailLevel.resin_ready
+            text = re.sub(r'\b(resin[ _-]?ready)\b', '', text, flags=re.IGNORECASE).strip()
+
+    # Extract category intent if not explicitly set
+    if not ai_category:
+        categories = ["Functional", "Mechanical", "Figurine", "Prop", "Miniature", "Terrain", "Jewelry", "Art"]
+        for cat in categories:
+            if re.search(rf'\b({cat})\b', text, re.IGNORECASE):
+                ai_category = cat
+                text = re.sub(rf'\b({cat})\b', '', text, flags=re.IGNORECASE).strip()
+                break
+
+    return text, detail_level, ai_category, ai_print_type
+
+
+def _build_query(filters: FilterParams):
+    """Build a SELECT statement from filter params with smart multi-field search and sorting."""
+    parsed_search, detail_level, ai_category, ai_print_type = _parse_search_intent(filters.search, filters)
+
+    stmt = select(Model3D).options(selectinload(Model3D.tags))
+
+    if parsed_search:
+        tokens = [t.strip() for t in parsed_search.split() if t.strip()]
+        token_conditions = []
+        for token in tokens:
+            t_pat = f"%{token}%"
+            token_cond = or_(
+                Model3D.original_filename.ilike(t_pat),
+                Model3D.predicted_name.ilike(t_pat),
+                Model3D.telegram_message_text.ilike(t_pat),
+                Model3D.ai_category.ilike(t_pat),
+                func.array_to_string(Model3D.ai_keywords, ' ').ilike(t_pat),
+            )
+            token_conditions.append(token_cond)
+        if token_conditions:
+            stmt = stmt.where(and_(*token_conditions))
+
+    if detail_level:
+        stmt = stmt.where(Model3D.detail_level == detail_level)
+    if ai_category:
+        stmt = stmt.where(Model3D.ai_category == ai_category)
+    if ai_print_type:
+        stmt = stmt.where(Model3D.ai_print_type == ai_print_type)
     if filters.source_group_id:
         stmt = stmt.where(Model3D.source_group_id == filters.source_group_id)
     if filters.min_face_count is not None:
         stmt = stmt.where(Model3D.face_count >= filters.min_face_count)
     if filters.max_face_count is not None:
         stmt = stmt.where(Model3D.face_count <= filters.max_face_count)
+
+    # Sorting
+    if filters.sort_by == "faces_desc":
+        stmt = stmt.order_by(Model3D.face_count.desc().nullslast())
+    elif filters.sort_by == "faces_asc":
+        stmt = stmt.order_by(Model3D.face_count.asc().nullslast())
+    elif filters.sort_by == "name_asc":
+        stmt = stmt.order_by(func.coalesce(Model3D.predicted_name, Model3D.original_filename).asc())
+    else:
+        stmt = stmt.order_by(Model3D.created_at.desc())
 
     return stmt
 
@@ -59,6 +129,7 @@ async def list_models(
     source_group_id: Optional[int] = Query(None),
     min_face_count: Optional[int] = Query(None),
     max_face_count: Optional[int] = Query(None),
+    sort_by: Optional[str] = Query("newest"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
@@ -72,6 +143,7 @@ async def list_models(
         source_group_id=source_group_id,
         min_face_count=min_face_count,
         max_face_count=max_face_count,
+        sort_by=sort_by,
         page=page,
         page_size=page_size,
     )
@@ -109,6 +181,48 @@ async def list_models(
         page_size=page_size,
         has_next=has_next,
     )
+
+
+@router.get(
+    "/suggestions",
+    summary="Get live search autocomplete suggestions",
+)
+async def get_search_suggestions(
+    q: str = Query("", description="Search term for suggestions"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    if not q or len(q.strip()) < 2:
+        return {"models": []}
+
+    term = f"%{q.strip()}%"
+    
+    stmt = (
+        select(Model3D)
+        .where(
+            or_(
+                Model3D.original_filename.ilike(term),
+                Model3D.predicted_name.ilike(term),
+                func.array_to_string(Model3D.ai_keywords, ' ').ilike(term)
+            )
+        )
+        .order_by(Model3D.created_at.desc())
+        .limit(5)
+    )
+    res = await db.execute(stmt)
+    models = res.scalars().all()
+
+    suggestions = []
+    for m in models:
+        suggestions.append({
+            "id": str(m.id),
+            "name": m.predicted_name or m.original_filename,
+            "ai_category": m.ai_category or "Uncategorized",
+            "thumbnail_url": f"/api/models/{m.id}/thumbnail" if m.thumbnail_path else None
+        })
+
+    return {"models": suggestions}
+
 
 
 @router.get(

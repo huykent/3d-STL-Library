@@ -10,36 +10,122 @@ import { useAuth } from "@/components/AuthProvider";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 
+import { SearchSuggestions, SuggestionItem } from "@/components/SearchSuggestions";
+import { api } from "@/lib/api";
+import { X } from "lucide-react";
+import { useRef, useEffect } from "react";
+
 function HeaderSearch() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [searchTerm, setSearchTerm] = useState(searchParams.get("q") || "");
+  const [suggestions, setSuggestions] = useState<SuggestionItem[]>([]);
+  const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
 
-  const handleSearch = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+  useEffect(() => {
+    setSearchTerm(searchParams.get("q") || "");
+  }, [searchParams]);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setShowSuggestions(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  useEffect(() => {
+    if (!searchTerm || searchTerm.trim().length < 2) {
+      setSuggestions([]);
+      setLoadingSuggestions(false);
+      return;
+    }
+
+    setLoadingSuggestions(true);
+    const timer = setTimeout(async () => {
+      try {
+        const response = await api.get(`/models/suggestions?q=${encodeURIComponent(searchTerm)}`);
+        setSuggestions(response.data.models || []);
+        setShowSuggestions(true);
+      } catch (err) {
+        console.error("Failed to fetch search suggestions", err);
+      } finally {
+        setLoadingSuggestions(false);
+      }
+    }, 250);
+
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
+
+  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
     setSearchTerm(val);
-    const params = new URLSearchParams(searchParams.toString());
-    if (val) {
-      params.set("q", val);
-    } else {
+    if (!val) {
+      const params = new URLSearchParams(searchParams.toString());
       params.delete("q");
+      router.push(`/dashboard?${params.toString()}`);
     }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      setShowSuggestions(false);
+      const params = new URLSearchParams(searchParams.toString());
+      if (searchTerm) {
+        params.set("q", searchTerm);
+      } else {
+        params.delete("q");
+      }
+      router.push(`/dashboard?${params.toString()}`);
+    }
+  };
+
+  const clearSearch = () => {
+    setSearchTerm("");
+    setShowSuggestions(false);
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("q");
     router.push(`/dashboard?${params.toString()}`);
-  }, [router, searchParams]);
+  };
 
   return (
-    <div className="relative w-full max-w-xl group">
-      <FiSearch className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-blue-400 transition-colors" />
+    <div ref={containerRef} className="relative w-full max-w-xl group">
+      <FiSearch className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-blue-400 transition-colors z-10" />
       <input
         type="text"
-        placeholder="Search models, tags..."
+        placeholder="Smart Search (e.g. 'Goku resin high poly', 'Star Wars')..."
         value={searchTerm}
-        onChange={handleSearch}
-        className="w-full bg-black/20 border border-white/10 rounded-full py-2 md:py-2.5 pl-10 md:pl-12 pr-4 text-sm focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/50 transition-all placeholder-gray-500 text-white"
+        onChange={handleSearchChange}
+        onKeyDown={handleKeyDown}
+        onFocus={() => {
+          if (suggestions.length > 0) setShowSuggestions(true);
+        }}
+        className="w-full bg-black/20 border border-white/10 rounded-full py-2 md:py-2.5 pl-10 md:pl-12 pr-10 text-sm focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/50 transition-all placeholder-gray-500 text-white"
       />
+      {searchTerm && (
+        <button
+          onClick={clearSearch}
+          className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white transition-colors z-10"
+        >
+          <X size={16} />
+        </button>
+      )}
+
+      {showSuggestions && (
+        <SearchSuggestions
+          suggestions={suggestions}
+          loading={loadingSuggestions}
+          onSelect={() => setShowSuggestions(false)}
+        />
+      )}
     </div>
   );
 }
+
 
 export default function DashboardLayout({
   children,

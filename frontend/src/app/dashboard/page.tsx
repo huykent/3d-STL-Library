@@ -22,6 +22,7 @@ export default function DashboardPage() {
     detail_level: '',
     ai_category: '',
     ai_print_type: '',
+    sort_by: 'newest',
   });
   const [showUploadModal, setShowUploadModal] = useState(false);
 
@@ -36,8 +37,10 @@ export default function DashboardPage() {
       if (currentFilters.detail_level) params.append('detail_level', currentFilters.detail_level);
       if (currentFilters.ai_category) params.append('ai_category', currentFilters.ai_category);
       if (currentFilters.ai_print_type) params.append('ai_print_type', currentFilters.ai_print_type);
+      if (currentFilters.sort_by) params.append('sort_by', currentFilters.sort_by);
 
       const response = await api.get(`/models?${params.toString()}`);
+
       
       setModels(response.data.items);
       setTotal(response.data.total);
