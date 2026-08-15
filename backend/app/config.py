@@ -15,15 +15,15 @@ class Settings(BaseSettings):
     )
 
     # Database
-    DATABASE_URL: str
+    DATABASE_URL: str = "postgresql+asyncpg://stluser:stlpass@postgres:5432/stl_library"
 
     # Redis
-    REDIS_URL: str
+    REDIS_URL: str = "redis://redis:6379/0"
 
     # Telegram Userbot
-    TELEGRAM_API_ID: int
-    TELEGRAM_API_HASH: str
-    TELEGRAM_PHONE: str
+    TELEGRAM_API_ID: int = 0
+    TELEGRAM_API_HASH: str = ""
+    TELEGRAM_PHONE: str = ""
     TELEGRAM_SESSION_NAME: str = "stl_crawler"
 
     # TELEGRAM_CHAT_IDS: stored as a plain str to prevent pydantic-settings from
@@ -33,13 +33,14 @@ class Settings(BaseSettings):
     TELEGRAM_TARGET_CHAT_ID: str = ""
 
     # Ollama
-    OLLAMA_BASE_URL: str
+    OLLAMA_BASE_URL: str = "http://localhost:11434"
     OLLAMA_MODEL: str = "llama3.2:3b"
 
     # JWT
-    SECRET_KEY: str
+    SECRET_KEY: str = "supersecretkey_change_me_in_production_123456789"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+
 
     # Paths
     THUMBNAIL_DIR: str = "/app/thumbnails"
