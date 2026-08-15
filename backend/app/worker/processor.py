@@ -386,6 +386,26 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
             except Exception as db_exc:
                 logger.error(f"[{model.id}] DB commit after failure also failed: {db_exc}")
 
+        finally:
+            # ── ALWAYS delete temp files and extraction dirs ──────────────
+            import shutil
+            if tmp_file and os.path.exists(tmp_file):
+                try:
+                    os.unlink(tmp_file)
+                    await _add_log(session, model, "Dọn dẹp", f"Đã xoá file tạm thời", path=tmp_file)
+                except OSError as e:
+                    logger.warning(f"[{model.id}] Could not delete temp file {tmp_file}: {e}")
+            if 'extract_dir' in locals() and os.path.exists(extract_dir):
+                try:
+                    shutil.rmtree(extract_dir)
+                    await _add_log(session, model, "Dọn dẹp", f"Đã dọn dẹp thư mục xả nén", path=extract_dir)
+                except OSError as e:
+                    logger.warning(f"[{model.id}] Could not delete extract dir {extract_dir}: {e}")
+
+            # Run a sweep on TEMP_DIR to purge any orphaned leftover temp files
+            _cleanup_orphaned_temp_files(settings.TEMP_DIR)
+
+
 def _cleanup_orphaned_temp_files(temp_dir: str, max_age_seconds: int = 1800) -> None:
     """Sweep and remove any temporary files or directories older than max_age_seconds."""
     import time
@@ -407,25 +427,6 @@ def _cleanup_orphaned_temp_files(temp_dir: str, max_age_seconds: int = 1800) -> 
         except Exception as e:
             logger.warning(f"Could not clean temp item {item_path}: {e}")
 
-
-        finally:
-            # ── ALWAYS delete temp files and extraction dirs ──────────────
-            import shutil
-            if tmp_file and os.path.exists(tmp_file):
-                try:
-                    os.unlink(tmp_file)
-                    await _add_log(session, model, "Dọn dẹp", f"Đã xoá file tạm thời", path=tmp_file)
-                except OSError as e:
-                    logger.warning(f"[{model.id}] Could not delete temp file {tmp_file}: {e}")
-            if 'extract_dir' in locals() and os.path.exists(extract_dir):
-                try:
-                    shutil.rmtree(extract_dir)
-                    await _add_log(session, model, "Dọn dẹp", f"Đã dọn dẹp thư mục xả nén", path=extract_dir)
-                except OSError as e:
-                    logger.warning(f"[{model.id}] Could not delete extract dir {extract_dir}: {e}")
-
-            # Run a sweep on TEMP_DIR to purge any orphaned leftover temp files
-            _cleanup_orphaned_temp_files(settings.TEMP_DIR)
 
 
 async def process_manual_upload(ctx: dict, model_id: str, filepath: str) -> None:
