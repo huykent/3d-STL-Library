@@ -15,10 +15,16 @@ from app.config import get_settings
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Return True if *plain_password* matches the stored *hashed_password*."""
-    return bcrypt.checkpw(
-        plain_password.encode("utf-8"),
-        hashed_password.encode("utf-8"),
-    )
+    try:
+        if not plain_password or not hashed_password:
+            return False
+        return bcrypt.checkpw(
+            plain_password.encode("utf-8"),
+            hashed_password.encode("utf-8"),
+        )
+    except Exception:
+        return False
+
 
 
 def get_password_hash(password: str) -> str:

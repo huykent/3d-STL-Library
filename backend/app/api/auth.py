@@ -19,25 +19,37 @@ async def login(
     db: AsyncSession = Depends(get_db),
 ) -> Token:
     """Authenticate with username + password and receive a JWT access token."""
-    # Look up user by username
-    result = await db.execute(
-        select(User).where(User.username == credentials.username)
-    )
-    user = result.scalar_one_or_none()
+    try:
+        # Look up user by username
+        result = await db.execute(
+            select(User).where(User.username == credentials.username)
+        )
+        user = result.scalar_one_or_none()
 
-    # Unified 401 for wrong user OR wrong password (avoid username enumeration)
-    if user is None or not verify_password(credentials.password, user.password_hash):
+        # Unified 401 for wrong user OR wrong password (avoid username enumeration)
+        if user is None or not verify_password(credentials.password, user.password_hash):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect username or password",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        if not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Account is disabled",
+            )
+
+        role_str = user.role.value if hasattr(user.role, 'value') else str(user.role)
+        token = create_access_token(subject=user.username, role=role_str)
+        return Token(access_token=token)
+    except HTTPException:
+        raise
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Login internal error: {e}", exc_info=True)
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
-            headers={"WWW-Authenticate": "Bearer"},
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Login error: {str(e)}"
         )
 
-    if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Account is disabled",
-        )
-
-    token = create_access_token(subject=user.username, role=user.role.value)
-    return Token(access_token=token)
