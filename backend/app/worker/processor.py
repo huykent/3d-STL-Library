@@ -143,19 +143,25 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
         internal_sg_id = source_group.id if source_group else None
 
         # ── Find existing Model3D record ──────────────────────────────────
-        stmt = select(Model3D).where(Model3D.telegram_message_id == message_id)
+        file_id_str = str(tg_message.document.id)
+        file_size = tg_message.document.size
+        stmt = select(Model3D).where(
+            (Model3D.telegram_message_id == message_id) |
+            (Model3D.telegram_file_id == file_id_str) |
+            ((Model3D.original_filename == file_name) & (Model3D.file_size_bytes == file_size))
+        )
         result = await session.execute(stmt)
-        model = result.scalar_one_or_none()
+        model = result.scalars().first()
 
         if model is None:
             logger.info(f"Creating new Model3D record for message_id={message_id}")
             model = Model3D(
-                telegram_file_id=str(tg_message.document.id),
+                telegram_file_id=file_id_str,
                 telegram_message_id=message_id,
                 source_group_id=internal_sg_id,
                 original_filename=file_name,
                 file_extension=file_name.split('.')[-1].lower() if '.' in file_name else "",
-                file_size_bytes=tg_message.document.size,
+                file_size_bytes=file_size,
                 processing_status=ProcessingStatus.processing,
                 processing_retries=1
             )
@@ -163,12 +169,13 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
             await session.flush()
         else:
             if model.processing_status == ProcessingStatus.completed:
-                logger.info(f"Model {model.id} already completed. Skipping re-processing.")
+                logger.info(f"Model {model.id} ({file_name}) already completed. Skipping re-processing.")
                 return
             model.processing_status = ProcessingStatus.processing
             model.processing_retries = (model.processing_retries or 0) + 1
             
         await session.commit()
+
 
         try:
             # ── Step 1: Download temp file from Telegram ──────────────────
@@ -349,8 +356,8 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
                             reply_to=reply_to_msg_id,
                             attributes=[DocumentAttributeFilename(file_name=model.original_filename)]
                         )
-                        model.telegram_message_id = doc_msg.id
-                        model.telegram_file_id = str(doc_msg.document.id) if doc_msg.document else None
+                        if doc_msg and doc_msg.document:
+                            model.telegram_file_id = str(doc_msg.document.id)
                     else:
                         await _add_log(session, model, "Upload", f"Đang upload file 3D kèm caption...")
                         tg_msg = await telegram_client.send_file(
@@ -359,8 +366,9 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
                             thumb=thumb_path if os.path.exists(thumb_path) else None,
                             caption=caption
                         )
-                        model.telegram_message_id = tg_msg.id
-                        model.telegram_file_id = str(tg_msg.document.id)
+                        if tg_msg and tg_msg.document:
+                            model.telegram_file_id = str(tg_msg.document.id)
+
                         
                     await session.commit()
                     await _add_log(session, model, "Upload", "Upload thành công lên nhóm đích.")

@@ -57,9 +57,11 @@ async def cron_crawl_history(ctx: dict) -> None:
                         continue
                         
                     file_ext = ""
+                    file_name = "unknown"
                     for attribute in message.document.attributes:
                         if hasattr(attribute, 'file_name'):
-                            file_ext = attribute.file_name.split('.')[-1].lower()
+                            file_name = attribute.file_name
+                            file_ext = file_name.split('.')[-1].lower()
                             break
                             
                     if file_ext in ['stl', 'obj', '3mf', 'pm7m', 'pwscene', 'zip', 'rar']:
@@ -68,19 +70,19 @@ async def cron_crawl_history(ctx: dict) -> None:
                         # Check date constraint
                         if message.date and message.date < target_date:
                             logger.info(f"Message {message.id} is older than {history_days} days. Skipping.")
-                            # Optionally, if messages are strictly ordered by date, we could break completely,
-                            # but older messages might be mixed. Usually they are ordered.
                             continue
 
-                        # Check for duplicates (same message or same file content)
+                        # Check for duplicates (same message, same file ID, or same filename + size)
                         file_id_str = str(message.document.id)
+                        file_size = message.document.size
                         stmt_dup = select(Model3D.id).where(
                             (Model3D.telegram_message_id == message.id) |
-                            (Model3D.telegram_file_id == file_id_str)
+                            (Model3D.telegram_file_id == file_id_str) |
+                            ((Model3D.original_filename == file_name) & (Model3D.file_size_bytes == file_size))
                         )
                         existing = await session.execute(stmt_dup)
                         if existing.scalar_one_or_none():
-                            logger.info(f"Duplicate file/message {message.id} in {chat_id}. Skipping.")
+                            logger.info(f"Duplicate file/message {message.id} ({file_name}) in {chat_id}. Skipping.")
                             continue
 
                         # Enqueue job
@@ -124,22 +126,27 @@ async def manual_crawl_history(ctx: dict, chat_id: int, limit: int = 1) -> None:
                     continue
                     
                 file_ext = ""
+                file_name = "unknown"
                 for attribute in message.document.attributes:
                     if hasattr(attribute, 'file_name'):
-                        file_ext = attribute.file_name.split('.')[-1].lower()
+                        file_name = attribute.file_name
+                        file_ext = file_name.split('.')[-1].lower()
                         break
                         
                 if file_ext in ['stl', 'obj', '3mf', 'pm7m', 'pwscene', 'zip', 'rar']:
                     # Check for duplicates
                     file_id_str = str(message.document.id)
+                    file_size = message.document.size
                     stmt_dup = select(Model3D.id).where(
                         (Model3D.telegram_message_id == message.id) |
-                        (Model3D.telegram_file_id == file_id_str)
+                        (Model3D.telegram_file_id == file_id_str) |
+                        ((Model3D.original_filename == file_name) & (Model3D.file_size_bytes == file_size))
                     )
                     existing = await session.execute(stmt_dup)
                     if existing.scalar_one_or_none():
-                        logger.info(f"[MANUAL CRAWL] Duplicate file/message {message.id} in {chat_id}. Skipping.")
+                        logger.info(f"[MANUAL CRAWL] Duplicate file/message {message.id} ({file_name}) in {chat_id}. Skipping.")
                         continue
+
                         
                     logger.info(f"[MANUAL CRAWL] Found 3D file: {message.id} in {chat_id}")
                     await redis.enqueue_job(
