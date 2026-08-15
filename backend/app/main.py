@@ -34,17 +34,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
             async with AsyncSessionLocal() as session:
                 res = await session.execute(select(User).where(User.username == "admin"))
-                if not res.scalar_one_or_none():
+                existing_admin = res.scalar_one_or_none()
+                if not existing_admin:
                     admin_user = User(
                         username="admin",
                         email="admin@example.com",
-                        password_hash=get_password_hash("admin"),
+                        password_hash=get_password_hash("admin123"),
                         role=UserRole.admin,
                         is_active=True
                     )
                     session.add(admin_user)
                     await session.commit()
-                    logger.info("Successfully seeded default admin user: admin / admin")
+                    logger.info("Successfully seeded default admin user: admin / admin123")
+
+
         except Exception as seed_err:
             logger.warning(f"Could not seed default admin user on startup: {seed_err}")
 
