@@ -39,7 +39,8 @@ async def cron_crawl_history(ctx: dict) -> None:
             # Use offset_id to crawl backwards. If none, start from the latest (0)
             offset_id = group.oldest_message_id or 0
             
-            logger.info(f"Crawling history for group {chat_id}, offset_id={offset_id}")
+            group_title = group.name or str(chat_id)
+            logger.info(f"[CÀO LỊCH SỬ] 🔍 Đang quét nhóm '{group_title}' (ID: {chat_id}) | Bắt đầu từ tin nhắn ID: #{offset_id or 'MỚI NHẤT'}")
             
             try:
                 # Fetch a small batch of older messages
@@ -65,11 +66,12 @@ async def cron_crawl_history(ctx: dict) -> None:
                             break
                             
                     if file_ext in ['stl', 'obj', '3mf', 'pm7m', 'pwscene', 'zip', 'rar']:
-                        logger.info(f"Found historical 3D file: {message.id} in {chat_id}")
+                        file_size_mb = (message.document.size / (1024 * 1024)) if message.document else 0
+                        logger.info(f"[CÀO LỊCH SỬ] 📁 Tìm thấy file 3D #{message.id}: '{file_name}' ({file_size_mb:.1f} MB) trong nhóm '{group_title}'")
                         
                         # Check date constraint
                         if message.date and message.date < target_date:
-                            logger.info(f"Message {message.id} is older than {history_days} days. Skipping.")
+                            logger.info(f"[CÀO LỊCH SỬ] ⏩ Tin nhắn #{message.id} đã cũ hơn {history_days} ngày. Bỏ qua.")
                             continue
 
                         # Check for duplicates (same message, same file ID, or same filename + size)
@@ -81,8 +83,8 @@ async def cron_crawl_history(ctx: dict) -> None:
                             ((Model3D.original_filename == file_name) & (Model3D.file_size_bytes == file_size))
                         )
                         existing = await session.execute(stmt_dup)
-                        if existing.scalar_one_or_none():
-                            logger.info(f"Duplicate file/message {message.id} ({file_name}) in {chat_id}. Skipping.")
+                        if existing.scalars().first():
+                            logger.info(f"[CÀO LỊCH SỬ] ⏭️ File/tin nhắn #{message.id} ('{file_name}') đã có trong CSDL. Bỏ qua trùng lặp.")
                             continue
 
                         # Enqueue job
@@ -91,8 +93,10 @@ async def cron_crawl_history(ctx: dict) -> None:
                             message_id=message.id,
                             chat_id=chat_id
                         )
+                        logger.info(f"[CÀO LỊCH SỬ] 🚀 Đã đẩy file '{file_name}' (#{message.id}) vào hàng đợi xử lý! (Tiến độ cào nhóm: mốc ID #{new_oldest_id})")
                         found_valid_file = True
                         break # Only process 1 file per group per cron run (Drip Feed)
+
                 
                 # Save progress so next time we go further back
                 if messages:
@@ -143,9 +147,10 @@ async def manual_crawl_history(ctx: dict, chat_id: int, limit: int = 1) -> None:
                         ((Model3D.original_filename == file_name) & (Model3D.file_size_bytes == file_size))
                     )
                     existing = await session.execute(stmt_dup)
-                    if existing.scalar_one_or_none():
+                    if existing.scalars().first():
                         logger.info(f"[MANUAL CRAWL] Duplicate file/message {message.id} ({file_name}) in {chat_id}. Skipping.")
                         continue
+
 
                         
                     logger.info(f"[MANUAL CRAWL] Found 3D file: {message.id} in {chat_id}")

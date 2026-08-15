@@ -35,10 +35,16 @@ async def extract_3d_files(file_path: str, extract_dir: str) -> list[str]:
         
     return extracted_3d_files
 
-async def download_telegram_document(client, message, save_dir: str) -> str:
+async def download_telegram_document(client, message, save_dir: str, progress_callback=None) -> str:
     """
     Download a document from a telegram message to the given directory.
+    Supports live progress callback (downloaded_bytes, total_bytes).
     Returns the path to the downloaded file.
     """
     os.makedirs(save_dir, exist_ok=True)
-    return await client.download_media(message.document, file=save_dir)
+    return await client.download_media(
+        message.document, 
+        file=save_dir,
+        progress_callback=progress_callback
+    )
+

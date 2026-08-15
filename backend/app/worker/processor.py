@@ -178,19 +178,41 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
 
 
         try:
-            # ── Step 1: Download temp file from Telegram ──────────────────
+            pipeline_start = time.time()
+
+            # ── Step 1: Download temp file from Telegram (10% -> 30%) ───────
             tmp_dir = settings.TEMP_DIR
             os.makedirs(tmp_dir, exist_ok=True)
 
-            await _add_log(session, model, "Tải file", "Bắt đầu tải file từ Telegram...")
-            tmp_file = await download_telegram_document(
-                telegram_client, tg_message, save_dir=tmp_dir
-            )
-            await _add_log(session, model, "Tải file", f"Tải thành công file tạm", path=tmp_file)
+            await _add_log(session, model, "Tải file (10%)", f"[10%] Bắt đầu tải file '{model.original_filename}' từ Telegram...")
 
-            # ── Step 1.5: Extract archive if needed ───────────────────────
+            dl_start = time.time()
+            last_log_time = [0.0]
+
+            def dl_progress_callback(downloaded, total):
+                now = time.time()
+                if now - last_log_time[0] >= 2.5 or downloaded == total:
+                    last_log_time[0] = now
+                    elapsed = now - dl_start
+                    pct = int(10 + (downloaded / total) * 20) if total else 10
+                    dl_mb = downloaded / (1024 * 1024)
+                    tot_mb = total / (1024 * 1024)
+                    speed = (dl_mb / elapsed) if elapsed > 0 else 0
+                    eta_sec = int((total - downloaded) / (speed * 1024 * 1024)) if speed > 0 else 0
+                    logger.info(
+                        f"[{model.original_filename}] [{pct}%] Đang tải: {dl_mb:.1f}/{tot_mb:.1f} MB "
+                        f"({int(downloaded/total*100) if total else 0}%) | Tốc độ: {speed:.1f} MB/s | Dấu vết ETA: ~{eta_sec}s"
+                    )
+
+            tmp_file = await download_telegram_document(
+                telegram_client, tg_message, save_dir=tmp_dir, progress_callback=dl_progress_callback
+            )
+            file_size_mb = (os.path.getsize(tmp_file) / (1024 * 1024)) if os.path.exists(tmp_file) else 0
+            await _add_log(session, model, "Tải file (30%)", f"[30%] Tải thành công file '{model.original_filename}' ({file_size_mb:.1f} MB) trong {time.time()-dl_start:.1f}s", path=tmp_file)
+
+            # ── Step 1.5: Extract archive if needed (40%) ─────────────────
             extract_dir = os.path.join(tmp_dir, f"ext_{model.id}")
-            await _add_log(session, model, "Xả nén", "Đang kiểm tra và xả nén file...")
+            await _add_log(session, model, "Xả nén (40%)", f"[40%] Đang kiểm tra định dạng và xả nén file '{model.original_filename}'...")
             extracted_files = await extract_3d_files(tmp_file, extract_dir)
             
             if not extracted_files:
@@ -200,31 +222,31 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
                 
             # Process the first valid 3D file found
             target_3d_file = extracted_files[0]
-            await _add_log(session, model, "Xả nén", "Tìm thấy file 3D để phân tích", path=target_3d_file)
+            await _add_log(session, model, "Xả nén (45%)", f"[45%] Tìm thấy file 3D chính: {os.path.basename(target_3d_file)}", path=target_3d_file)
 
-            # ── Step 2: Analyze mesh geometry ─────────────────────────────
-            await _add_log(session, model, "Đo đạc 3D", "Đang đọc lưới tam giác (Mesh) của file 3D...")
+            # ── Step 2: Analyze mesh geometry (55%) ───────────────────────
+            await _add_log(session, model, "Đo đạc 3D (55%)", f"[55%] Đang phân tích lưới 3D tam giác (Trimesh) của {os.path.basename(target_3d_file)}...")
             analysis = analyze_mesh(target_3d_file)
-            await _add_log(session, model, "Đo đạc 3D", 
-                f"Đo đạc hoàn tất. Số mặt (faces): {analysis.face_count:,}, "
-                f"Kích thước: {analysis.bbox_x_mm:.1f}×{analysis.bbox_y_mm:.1f}×{analysis.bbox_z_mm:.1f}mm."
+            await _add_log(session, model, "Đo đạc 3D (65%)", 
+                f"[65%] Đo đạc 3D hoàn tất: {analysis.face_count:,} mặt | "
+                f"Kích thước: {analysis.bbox_x_mm:.1f}×{analysis.bbox_y_mm:.1f}×{analysis.bbox_z_mm:.1f}mm"
             )
 
-            # ── Step 3: Render thumbnail ───────────────────────────────────
-            await _add_log(session, model, "Thumbnail", "Đang dựng hình và chụp ảnh Thumbnail...")
+            # ── Step 3: Render thumbnail (75%) ─────────────────────────────
+            await _add_log(session, model, "Thumbnail (75%)", f"[75%] Đang dựng hình 3D EGL offscreen & chụp Thumbnail...")
             thumb_filename = f"{model.id}.png"
             thumb_path = os.path.join(settings.THUMBNAIL_DIR, thumb_filename)
             render_thumbnail(target_3d_file, thumb_path)
             model.thumbnail_path = thumb_filename
-            await _add_log(session, model, "Thumbnail", "Tạo Thumbnail thành công", path=thumb_path)
+            await _add_log(session, model, "Thumbnail (80%)", f"[80%] Đã tạo ảnh Thumbnail 3D thành công", path=thumb_path)
             
-            # ── Step 3.5: Fetch related Telegram Images ───────────────────
-            await _add_log(session, model, "Album", "Đang tìm kiếm ảnh demo đi kèm...")
+            # ── Step 3.5: Fetch related Telegram Images (82%) ─────────────
+            await _add_log(session, model, "Album (82%)", "[82%] Đang tìm kiếm các ảnh demo đính kèm trong bài viết...")
             related_image_messages = await _fetch_related_images(telegram_client, chat_id, tg_message)
             
             image_paths = []
             if related_image_messages:
-                await _add_log(session, model, "Album", f"Tìm thấy {len(related_image_messages)} ảnh demo. Đang tải...")
+                await _add_log(session, model, "Album (85%)", f"[85%] Tìm thấy {len(related_image_messages)} ảnh demo. Đang tải album...")
                 for i, img_msg in enumerate(related_image_messages):
                     try:
                         ext = '.jpg'
@@ -242,12 +264,12 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
                     except Exception as e:
                         logger.error(f"Failed to download related image: {e}")
                         
-                await _add_log(session, model, "Album", f"Tải thành công {len(image_paths)} ảnh demo.")
+                await _add_log(session, model, "Album (88%)", f"[88%] Tải thành công {len(image_paths)} ảnh demo.")
                 model.image_paths = image_paths
             else:
-                await _add_log(session, model, "Album", "Không tìm thấy ảnh demo nào đi kèm.")
+                await _add_log(session, model, "Album (88%)", "[88%] Bài viết không chứa album ảnh đính kèm.")
 
-            # ── Step 4: Phân loại / AI Tagging ────────────────────────────
+            # ── Step 4: Phân loại / AI Tagging (90%) ──────────────────────
             message_text = tg_message.text or ""
             if not message_text and related_image_messages:
                 for img_msg in related_image_messages:
@@ -259,12 +281,10 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
             hashtags = re.findall(r'#\w+', message_text)
             
             if len(hashtags) >= 2 and len(message_text.strip()) > 5:
-                # Bypass AI because we have enough info
-                await _add_log(session, model, "Phân loại", f"Bài viết gốc đã có sẵn {len(hashtags)} hashtags, bỏ qua AI để tiết kiệm thời gian.")
+                await _add_log(session, model, "Phân loại (90%)", f"[90%] Bài viết gốc có sẵn {len(hashtags)} hashtags, bỏ qua AI để tối ưu thời gian.")
                 cleaned_text = re.sub(r'#\w+', '', message_text).strip()
                 lines = [line.strip() for line in cleaned_text.splitlines() if line.strip()]
                 
-                # Use the first line as name, fallback to original filename
                 predicted_name = lines[0][:100] if lines else model.original_filename.split('.')[0]
                 
                 model.predicted_name = predicted_name
@@ -273,7 +293,7 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
                 model.ai_keywords = ", ".join([h.replace('#', '') for h in hashtags])
                 model.ai_raw_response = "Bypassed AI (Manual parsing)"
             else:
-                await _add_log(session, model, "AI Tagger", "Gửi dữ liệu và nội dung tin nhắn Telegram cho AI...")
+                await _add_log(session, model, "AI Tagger (90%)", "[90%] Gửi dữ liệu và mô tả cho AI Ollama đặt tên & gắn tag...")
                 
                 ai_result = await tag_model(
                     filename=model.original_filename,
@@ -281,9 +301,8 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
                     bbox=(analysis.bbox_x_mm, analysis.bbox_y_mm, analysis.bbox_z_mm),
                     message_text=message_text,
                 )
-                await _add_log(session, model, "AI Tagger", 
-                    f"Phân tích AI hoàn tất. Tên dự đoán: {ai_result.predicted_name}, "
-                    f"Loại: {ai_result.print_type}"
+                await _add_log(session, model, "AI Tagger (93%)", 
+                    f"[93%] AI hoàn tất: '{ai_result.predicted_name}' | Loại: {ai_result.print_type}"
                 )
                 
                 model.predicted_name = ai_result.predicted_name
@@ -295,7 +314,7 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
                 model.ai_keywords = ai_result.keywords
                 model.ai_raw_response = ai_result.raw_response
 
-            # ── Step 5: Persist results to DB ─────────────────────────────
+            # ── Step 5: Persist results to DB (95%) ───────────────────────
             model.vertex_count = analysis.vertex_count
             model.face_count = analysis.face_count
             model.detail_level = DetailLevel(analysis.detail_level.value)
@@ -307,10 +326,8 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
 
             model.processing_status = ProcessingStatus.completed
             model.processing_error = None
-            
-            await _add_log(session, model, "Hoàn tất", "Xử lý file thành công!")
 
-            # ── Step 6: Upload to Target Group ─────────────────────────────
+            # ── Step 6: Upload to Target Group (98%) ───────────────────────
             from app.services.settings import SettingsService
             target_chat_str = await SettingsService.get_setting("TELEGRAM_TARGET_CHAT_ID")
             if not target_chat_str:
@@ -327,7 +344,6 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
                         f"🏷️ **Tags:** {model.ai_keywords}\n"
                     )
                     
-                    # Prepare album files
                     image_files = []
                     if model.image_paths:
                         for p in model.image_paths:
@@ -336,19 +352,15 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
                                 image_files.append(full_p)
                                 
                     if image_files:
-                        await _add_log(session, model, "Upload", f"Đang upload album ({len(image_files)} ảnh) lên nhóm đích: {target_chat_id}...")
+                        await _add_log(session, model, "Backup (98%)", f"[98%] Đang upload album ({len(image_files)} ảnh) + file 3D sang nhóm đích ({target_chat_id})...")
                         
-                        # 1. Send album FIRST with the caption
                         album_msgs = await telegram_client.send_file(
                             target_chat_id, 
                             image_files,
                             caption=caption
                         )
                         
-                        # 2. Send the document SECOND, replying to the album (keeps them grouped nicely)
                         reply_to_msg_id = album_msgs[0].id if isinstance(album_msgs, list) else album_msgs.id
-                        
-                        await _add_log(session, model, "Upload", f"Đang upload file 3D đính kèm...")
                         from telethon.tl.types import DocumentAttributeFilename
                         doc_msg = await telegram_client.send_file(
                             target_chat_id, 
@@ -359,7 +371,7 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
                         if doc_msg and doc_msg.document:
                             model.telegram_file_id = str(doc_msg.document.id)
                     else:
-                        await _add_log(session, model, "Upload", f"Đang upload file 3D kèm caption...")
+                        await _add_log(session, model, "Backup (98%)", f"[98%] Đang upload file 3D kèm mô tả sang nhóm đích ({target_chat_id})...")
                         tg_msg = await telegram_client.send_file(
                             target_chat_id, 
                             tmp_file, 
@@ -369,12 +381,14 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
                         if tg_msg and tg_msg.document:
                             model.telegram_file_id = str(tg_msg.document.id)
 
-                        
                     await session.commit()
-                    await _add_log(session, model, "Upload", "Upload thành công lên nhóm đích.")
-                    logger.info(f"[{model.id}] Successfully backed up file to target group {target_chat_id}")
+                    await _add_log(session, model, "Backup (99%)", "[99%] Upload thành công lên nhóm đích.")
                 except Exception as upload_exc:
                     logger.error(f"[{model.id}] Failed to upload to target group: {upload_exc}")
+
+            total_elapsed = time.time() - pipeline_start
+            await _add_log(session, model, "Hoàn tất (100%)", f"[100%] Hoàn tất 100% xử lý model '{model.original_filename}' trong {total_elapsed:.1f} giây!")
+
 
         except Exception as exc:
             model.processing_status = ProcessingStatus.failed

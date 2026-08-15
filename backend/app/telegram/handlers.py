@@ -35,9 +35,10 @@ async def handle_new_message(event):
             ((Model3D.original_filename == file_name) & (Model3D.file_size_bytes == file_size))
         )
         existing = await session.execute(stmt_dup)
-        if existing.scalar_one_or_none():
+        if existing.scalars().first():
             logger.info(f"File/message {event.message.id} ({file_name}) already in DB. Skipping duplicate.")
             return
+
 
     logger.info(f"Found new 3D file: {event.message.id} ({file_name})")
     
