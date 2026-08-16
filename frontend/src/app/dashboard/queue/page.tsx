@@ -5,7 +5,9 @@ import { api } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { FiActivity, FiClock, FiCheckCircle, FiServer, FiChevronDown, FiChevronUp, FiTerminal } from "react-icons/fi";
+import { FiActivity, FiClock, FiCheckCircle, FiServer, FiChevronDown, FiChevronUp, FiTerminal, FiRefreshCw } from "react-icons/fi";
+
+
 
 interface ProcessingLog {
   step: string;
@@ -53,6 +55,8 @@ export default function ActiveQueuePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [expandedLogs, setExpandedLogs] = useState<Record<string, boolean>>({});
+  const [reprocessing, setReprocessing] = useState(false);
+  const [toastMsg, setToastMsg] = useState("");
 
   const fetchStatus = async () => {
     try {
@@ -63,6 +67,20 @@ export default function ActiveQueuePage() {
       setError(err.response?.data?.detail || "Failed to fetch queue status");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleReprocessFailed = async () => {
+    setReprocessing(true);
+    try {
+      const res = await api.post<{ status: string; message: string; requeued_count: number }>("/admin/queue/reprocess-failed");
+      setToastMsg(res.data.message);
+      fetchStatus();
+    } catch (err: any) {
+      setError(err.response?.data?.detail || "Failed to reprocess failed models");
+    } finally {
+      setReprocessing(false);
+      setTimeout(() => setToastMsg(""), 5000);
     }
   };
 
@@ -102,13 +120,28 @@ export default function ActiveQueuePage() {
             Real-time monitoring of Telegram 3D model crawling, geometry extraction, AI tagging, and backup uploads.
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30 px-3 py-1.5 flex items-center gap-2">
+        <div className="flex items-center gap-3">
+          <Button
+            onClick={handleReprocessFailed}
+            disabled={reprocessing}
+            className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-medium flex items-center gap-2 px-4 py-2 rounded-xl shadow-lg shadow-blue-500/20"
+          >
+            <FiRefreshCw className={`w-4 h-4 ${reprocessing ? "animate-spin" : ""}`} />
+            {reprocessing ? "Đang đẩy vào hàng chờ..." : "Thử lại các file lỗi"}
+          </Button>
+          <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30 px-3 py-2 flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
             Auto-Sync 2s
           </Badge>
         </div>
       </div>
+
+      {toastMsg && (
+        <div className="bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 p-4 rounded-xl text-sm font-medium">
+          {toastMsg}
+        </div>
+      )}
+
 
       {error && (
         <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-xl text-sm">

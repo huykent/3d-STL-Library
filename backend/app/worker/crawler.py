@@ -74,18 +74,28 @@ async def cron_crawl_history(ctx: dict) -> None:
                             logger.info(f"[CÀO LỊCH SỬ] ⏩ Tin nhắn #{message.id} đã cũ hơn {history_days} ngày. Bỏ qua.")
                             continue
 
-                        # Check for duplicates (same message, same file ID, or same filename + size)
+from app.models.model3d import Model3D, ProcessingStatus
+
+                        # Check for duplicates (skip if completed or max retries exceeded)
                         file_id_str = str(message.document.id)
                         file_size = message.document.size
-                        stmt_dup = select(Model3D.id).where(
+                        stmt_dup = select(Model3D).where(
                             (Model3D.telegram_message_id == message.id) |
                             (Model3D.telegram_file_id == file_id_str) |
                             ((Model3D.original_filename == file_name) & (Model3D.file_size_bytes == file_size))
                         )
-                        existing = await session.execute(stmt_dup)
-                        if existing.scalars().first():
-                            logger.info(f"[CÀO LỊCH SỬ] ⏭️ File/tin nhắn #{message.id} ('{file_name}') đã có trong CSDL. Bỏ qua trùng lặp.")
-                            continue
+                        existing_res = await session.execute(stmt_dup)
+                        existing_m = existing_res.scalars().first()
+                        if existing_m:
+                            if existing_m.processing_status == ProcessingStatus.completed:
+                                logger.info(f"[CÀO LỊCH SỬ] ⏭️ File/tin nhắn #{message.id} ('{file_name}') đã hoàn tất. Bỏ qua.")
+                                continue
+                            elif (existing_m.processing_retries or 0) >= 3:
+                                logger.info(f"[CÀO LỊCH SỬ] ⏭️ File/tin nhắn #{message.id} ('{file_name}') đã thử lại 3 lần thất bại. Bỏ qua.")
+                                continue
+                            else:
+                                logger.info(f"[CÀO LỊCH SỬ] 🔄 File #{message.id} ('{file_name}') từng thất bại (retries: {existing_m.processing_retries}). Thử lại...")
+
 
                         # Enqueue job
                         await redis.enqueue_job(

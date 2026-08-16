@@ -316,3 +316,42 @@ async def get_queue_status_api(
         "queued_jobs": queued_jobs
     }
 
+
+@router.post(
+    "/queue/reprocess-failed",
+    summary="Re-enqueue all failed models for reprocessing (admin only)",
+)
+async def reprocess_failed_models_api(
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(get_current_active_admin),
+):
+    """Resets failed models to pending status and pushes them to Redis queue."""
+    from app.worker.queue import get_redis_pool
+    stmt_failed = select(Model3D).where(Model3D.processing_status == ProcessingStatus.failed)
+    res = await db.execute(stmt_failed)
+    failed_models = res.scalars().all()
+
+    if not failed_models:
+        return {"status": "success", "message": "No failed models to reprocess", "requeued_count": 0}
+
+    redis = await get_redis_pool()
+    requeued_count = 0
+
+    for model in failed_models:
+        model.processing_status = ProcessingStatus.pending
+        model.processing_error = None
+        requeued_count += 1
+        await redis.enqueue_job(
+            'process_telegram_message',
+            message_id=model.telegram_message_id,
+            chat_id=model.source_group_id
+        )
+
+    await db.commit()
+    return {
+        "status": "success",
+        "message": f"Successfully re-queued {requeued_count} failed models for reprocessing",
+        "requeued_count": requeued_count
+    }
+
+
