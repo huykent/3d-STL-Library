@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { FiGrid, FiSettings, FiTerminal, FiLogOut, FiUploadCloud, FiSearch } from "react-icons/fi";
+import { FiGrid, FiSettings, FiTerminal, FiLogOut, FiUploadCloud, FiSearch, FiLayers } from "react-icons/fi";
+
 import { Menu } from "lucide-react";
 import { useState, useCallback, Suspense } from "react";
 import UploadModal from "@/components/UploadModal";
@@ -141,7 +142,10 @@ export default function DashboardLayout({
 
   const baseNavItems = [
     { name: "Gallery", href: "/dashboard", icon: FiGrid },
+    { name: "Active Queue", href: "/dashboard/queue", icon: FiLayers },
   ];
+
+
 
   const userNavItems = [
     { name: "My Profile", href: "/dashboard/profile", icon: FiSettings },
