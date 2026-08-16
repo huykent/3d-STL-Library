@@ -294,14 +294,16 @@ async def get_queue_status_api(
         })
 
     # Summary count
-    from datetime import datetime, timezone
+    from datetime import datetime
+    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
     from sqlalchemy import func
-    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
     stmt_completed_today = select(func.count(Model3D.id)).where(
         Model3D.processing_status == ProcessingStatus.completed,
         Model3D.updated_at >= today_start
     )
+
     completed_today_count = (await db.execute(stmt_completed_today)).scalar() or 0
+
 
     return {
         "summary": {
