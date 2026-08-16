@@ -195,10 +195,11 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
 
             dl_start = time.time()
             last_log_time = [0.0]
+            current_loop = asyncio.get_event_loop()
 
             def dl_progress_callback(downloaded, total):
                 now = time.time()
-                if now - last_log_time[0] >= 2.5 or downloaded == total:
+                if now - last_log_time[0] >= 2.0 or downloaded == total:
                     last_log_time[0] = now
                     elapsed = now - dl_start
                     pct = int(10 + (downloaded / total) * 20) if total else 10
@@ -206,14 +207,24 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
                     tot_mb = total / (1024 * 1024)
                     speed = (dl_mb / elapsed) if elapsed > 0 else 0
                     eta_sec = int((total - downloaded) / (speed * 1024 * 1024)) if speed > 0 else 0
-                    logger.info(
-                        f"[{model.original_filename}] [{pct}%] Đang tải: {dl_mb:.1f}/{tot_mb:.1f} MB "
-                        f"({int(downloaded/total*100) if total else 0}%) | Tốc độ: {speed:.1f} MB/s | Dấu vết ETA: ~{eta_sec}s"
+                    log_msg = (
+                        f"[{pct}%] Đang tải: {dl_mb:.1f}/{tot_mb:.1f} MB "
+                        f"({int(downloaded/total*100) if total else 0}%) | Tốc độ: {speed:.1f} MB/s | Dự kiến còn lại: ~{eta_sec}s"
                     )
+                    logger.info(f"[{model.original_filename}] {log_msg}")
+                    try:
+                        if current_loop and current_loop.is_running():
+                            asyncio.run_coroutine_threadsafe(
+                                _add_log(session, model, f"Tải file ({pct}%)", log_msg),
+                                current_loop
+                            )
+                    except Exception:
+                        pass
 
             tmp_file = await download_telegram_document(
                 telegram_client, tg_message, save_dir=tmp_dir, progress_callback=dl_progress_callback
             )
+
             file_size_mb = (os.path.getsize(tmp_file) / (1024 * 1024)) if os.path.exists(tmp_file) else 0
             await _add_log(session, model, "Tải file (30%)", f"[30%] Tải thành công file '{model.original_filename}' ({file_size_mb:.1f} MB) trong {time.time()-dl_start:.1f}s", path=tmp_file)
 
