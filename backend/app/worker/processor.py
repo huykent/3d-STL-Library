@@ -17,8 +17,11 @@ from __future__ import annotations
 
 import logging
 import os
+import time
+import asyncio
 
 from sqlalchemy import select
+
 
 from app.config import get_settings
 from app.database import AsyncSessionLocal
@@ -124,8 +127,12 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
     tmp_file: str | None = None
 
     async with AsyncSessionLocal() as session:
+        if not telegram_client.is_connected():
+            await telegram_client.connect()
+
         # ── Fetch Telegram message first to get filename ─────────────────
         tg_message = await telegram_client.get_messages(chat_id, ids=message_id)
+
         if not tg_message or not tg_message.document:
             logger.error(f"Cannot find valid telegram message {message_id} in {chat_id}")
             return
