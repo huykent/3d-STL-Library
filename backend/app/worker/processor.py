@@ -212,8 +212,11 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
             # ── Step 1: Download temp file from Telegram (10% -> 30%) ───────
             tmp_dir = settings.TEMP_DIR
             os.makedirs(tmp_dir, exist_ok=True)
+            # Run immediate cleanup of any leftover temp files older than 2 minutes
+            _cleanup_orphaned_temp_files(tmp_dir, max_age_seconds=120)
 
             await _add_log(session, model, "Tải file (10%)", f"[10%] Bắt đầu tải file '{model.original_filename}' từ Telegram...")
+
 
             dl_start = time.time()
             last_log_time = [0.0]
@@ -461,8 +464,9 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
             _cleanup_orphaned_temp_files(settings.TEMP_DIR)
 
 
-def _cleanup_orphaned_temp_files(temp_dir: str, max_age_seconds: int = 1800) -> None:
+def _cleanup_orphaned_temp_files(temp_dir: str, max_age_seconds: int = 120) -> None:
     """Sweep and remove any temporary files or directories older than max_age_seconds."""
+
     import time
     import shutil
     if not os.path.exists(temp_dir):
