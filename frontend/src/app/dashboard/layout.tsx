@@ -182,7 +182,10 @@ export default function DashboardLayout({
         })}
       </div>
     </div>
+  );
+
   const SidebarContent = () => (
+
     <>
       <div className="p-6">
         <Logo size="md" />
