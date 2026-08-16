@@ -1,7 +1,8 @@
 import logging
 from app.database import AsyncSessionLocal
 from app.models.source_group import SourceGroup
-from app.models.model3d import Model3D
+from app.models.model3d import Model3D, ProcessingStatus
+
 from sqlalchemy import select
 from datetime import datetime, timedelta, timezone
 
@@ -72,11 +73,8 @@ async def cron_crawl_history(ctx: dict) -> None:
                         # Check date constraint
                         if message.date and message.date < target_date:
                             logger.info(f"[CÀO LỊCH SỬ] ⏩ Tin nhắn #{message.id} đã cũ hơn {history_days} ngày. Bỏ qua.")
-                            continue
-
-from app.models.model3d import Model3D, ProcessingStatus
-
                         # Check for duplicates (skip if completed or max retries exceeded)
+
                         file_id_str = str(message.document.id)
                         file_size = message.document.size
                         stmt_dup = select(Model3D).where(
