@@ -49,10 +49,32 @@ async def _add_log(session: AsyncSession, model: Model3D, step: str, message: st
     
     current_logs = model.processing_logs or []
     current_logs.append(log_entry)
-    # SQLAlchemy requires assigning a new list object to detect JSONB mutation
     model.processing_logs = list(current_logs)
+    model.updated_at = datetime.utcnow()
     
     logger.info(f"[{model.id}] {step}: {message}")
+
+
+async def _add_log_by_id(model_id, step: str, message: str) -> None:
+    """Independent session helper for background thread logging during download."""
+    try:
+        async with AsyncSessionLocal() as session:
+            stmt = select(Model3D).where(Model3D.id == model_id)
+            res = await session.execute(stmt)
+            m = res.scalars().first()
+            if m:
+                logs = list(m.processing_logs or [])
+                logs.append({
+                    "step": step,
+                    "message": message,
+                    "time": datetime.utcnow().isoformat()
+                })
+                m.processing_logs = logs
+                m.updated_at = datetime.utcnow()
+                await session.commit()
+    except Exception as e:
+        logger.warning(f"Error in _add_log_by_id: {e}")
+
     await session.commit()
 
 
@@ -215,9 +237,10 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
                     try:
                         if current_loop and current_loop.is_running():
                             asyncio.run_coroutine_threadsafe(
-                                _add_log(session, model, f"Tải file ({pct}%)", log_msg),
+                                _add_log_by_id(model.id, f"Tải file ({pct}%)", log_msg),
                                 current_loop
                             )
+
                     except Exception:
                         pass
 
