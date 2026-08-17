@@ -336,21 +336,13 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
                 f"Kích thước: {analysis.bbox_x_mm:.1f}×{analysis.bbox_y_mm:.1f}×{analysis.bbox_z_mm:.1f}mm"
             )
 
-            # ── Step 3: Render thumbnail (75%) ─────────────────────────────
-            await _add_log(session, model, "Thumbnail (75%)", f"[75%] Đang dựng hình 3D EGL offscreen & chụp Thumbnail...")
-            thumb_filename = f"{model.id}.png"
-            thumb_path = os.path.join(settings.THUMBNAIL_DIR, thumb_filename)
-            render_thumbnail(target_3d_file, thumb_path)
-            model.thumbnail_path = thumb_filename
-            await _add_log(session, model, "Thumbnail (80%)", f"[80%] Đã tạo ảnh Thumbnail 3D thành công", path=thumb_path)
-            
-            # ── Step 3.5: Fetch related Telegram Images (82%) ─────────────
-            await _add_log(session, model, "Album (82%)", "[82%] Đang tìm kiếm các ảnh demo đính kèm trong bài viết...")
+            # ── Step 3: Fetch Telegram demo images TRƯỚC (75%) ────────────
+            await _add_log(session, model, "Album (75%)", "[75%] Đang tìm kiếm ảnh demo đính kèm trong bài viết Telegram...")
             related_image_messages = await _fetch_related_images(telegram_client, chat_id, tg_message)
-            
+
             image_paths = []
             if related_image_messages:
-                await _add_log(session, model, "Album (85%)", f"[85%] Tìm thấy {len(related_image_messages)} ảnh demo. Đang tải album...")
+                await _add_log(session, model, "Album (78%)", f"[78%] Tìm thấy {len(related_image_messages)} ảnh demo. Đang tải album...")
                 for i, img_msg in enumerate(related_image_messages):
                     try:
                         ext = '.jpg'
@@ -359,7 +351,7 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
                                 if hasattr(attr, 'file_name') and '.' in attr.file_name:
                                     ext = '.' + attr.file_name.split('.')[-1]
                                     break
-                                    
+
                         img_filename = f"{model.id}_{i+1}{ext}"
                         img_path = os.path.join(settings.THUMBNAIL_DIR, img_filename)
                         await telegram_client.download_media(img_msg, file=img_path)
@@ -367,11 +359,27 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
                             image_paths.append(img_filename)
                     except Exception as e:
                         logger.error(f"Failed to download related image: {e}")
-                        
-                await _add_log(session, model, "Album (88%)", f"[88%] Tải thành công {len(image_paths)} ảnh demo.")
+
                 model.image_paths = image_paths
+                await _add_log(session, model, "Album (82%)", f"[82%] Tải thành công {len(image_paths)} ảnh demo từ Telegram.")
             else:
-                await _add_log(session, model, "Album (88%)", "[88%] Bài viết không chứa album ảnh đính kèm.")
+                await _add_log(session, model, "Album (78%)", "[78%] Không có ảnh demo đính kèm.")
+
+            # ── Step 3.5: Render 3D thumbnail — CHỈ KHI không có ảnh TG (80%) ──
+            if image_paths:
+                # Dùng ảnh Telegram đầu tiên làm thumbnail → bỏ qua render EGL tốn tài nguyên
+                thumb_filename = image_paths[0]
+                model.thumbnail_path = thumb_filename
+                await _add_log(session, model, "Thumbnail (85%)", f"[85%] Dùng ảnh demo Telegram làm thumbnail: {thumb_filename}")
+            else:
+                # Không có ảnh → render từ file 3D bằng pyrender EGL
+                await _add_log(session, model, "Thumbnail (82%)", "[82%] Không có ảnh demo, đang dựng hình 3D EGL offscreen...")
+                thumb_filename = f"{model.id}.png"
+                thumb_path = os.path.join(settings.THUMBNAIL_DIR, thumb_filename)
+                render_thumbnail(target_3d_file, thumb_path)
+                model.thumbnail_path = thumb_filename
+                await _add_log(session, model, "Thumbnail (85%)", f"[85%] Đã tạo Thumbnail 3D thành công", path=thumb_path)
+
 
             # ── Step 4: Phân loại / AI Tagging (90%) ──────────────────────
             message_text = tg_message.text or ""
