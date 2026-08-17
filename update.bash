@@ -11,9 +11,16 @@ echo "=========================================="
 echo ""
 echo "1. Pulling latest code from GitHub..."
 BEFORE_COMMIT=$(git rev-parse HEAD)
-GIT_OUTPUT=$(git pull origin main)
-echo "$GIT_OUTPUT"
+
+# Dùng fetch + reset --hard để tránh lỗi "local changes would be overwritten"
+# (các file log/rác trên VPS không bao giờ chặn được update nữa)
+git fetch origin main
+git reset --hard origin/main
+git clean -fd --quiet   # Xóa file untracked không nằm trong .gitignore
+
 AFTER_COMMIT=$(git rev-parse HEAD)
+echo "  Trước: $BEFORE_COMMIT"
+echo "  Sau:   $AFTER_COMMIT"
 
 if [ "$BEFORE_COMMIT" = "$AFTER_COMMIT" ]; then
     echo ""
