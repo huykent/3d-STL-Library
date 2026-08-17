@@ -12,11 +12,9 @@ echo ""
 echo "1. Pulling latest code from GitHub..."
 BEFORE_COMMIT=$(git rev-parse HEAD)
 
-# Dùng fetch + reset --hard để tránh lỗi "local changes would be overwritten"
-# (các file log/rác trên VPS không bao giờ chặn được update nữa)
 git fetch origin main
 git reset --hard origin/main
-git clean -fd --quiet   # Xóa file untracked không nằm trong .gitignore
+git clean -fd --quiet
 
 AFTER_COMMIT=$(git rev-parse HEAD)
 echo "  Trước: $BEFORE_COMMIT"
@@ -33,69 +31,62 @@ fi
 
 # ── 2. Phát hiện thư mục nào thay đổi ────────────────────────────────────────
 echo ""
-echo "2. Phân tích thay đổi so với commit trước..."
+echo "2. Phân tích thay đổi..."
 CHANGED_FILES=$(git diff --name-only "$BEFORE_COMMIT" "$AFTER_COMMIT")
-echo "Files thay đổi:"
 echo "$CHANGED_FILES"
 
 BACKEND_CHANGED=false
 FRONTEND_CHANGED=false
-COMPOSE_CHANGED=false
+DEPS_CHANGED=false   # requirements.txt, Dockerfile, docker-compose.yml, .env
 
 if echo "$CHANGED_FILES" | grep -qE "^backend/"; then
     BACKEND_CHANGED=true
-    echo "  → Backend (api + worker) có thay đổi"
 fi
-
 if echo "$CHANGED_FILES" | grep -qE "^frontend/"; then
     FRONTEND_CHANGED=true
-    echo "  → Frontend có thay đổi"
+fi
+# Nếu dependency hoặc infra thay đổi → phải rebuild image
+if echo "$CHANGED_FILES" | grep -qE "requirements.*\.txt|Dockerfile|docker-compose\.yml|\.env"; then
+    DEPS_CHANGED=true
 fi
 
-if echo "$CHANGED_FILES" | grep -qE "^docker-compose\.yml$|^\.env"; then
-    COMPOSE_CHANGED=true
-    echo "  → docker-compose.yml hoặc .env có thay đổi — rebuild toàn bộ"
-fi
-
-# ── 3. Rebuild + restart chỉ những service liên quan ─────────────────────────
+# ── 3. Update từng phần ───────────────────────────────────────────────────────
 echo ""
+echo "3. Áp dụng thay đổi..."
 
-# Nếu docker-compose hoặc .env thay đổi: rebuild toàn bộ
-if [ "$COMPOSE_CHANGED" = true ]; then
-    echo "3. docker-compose hoặc .env thay đổi → Rebuild toàn bộ stack..."
-    docker builder prune -f
-    docker image prune -f
-    docker compose down
-    docker compose build --no-cache
+# ── Case A: Infra/deps thay đổi → rebuild toàn bộ (chậm nhưng cần thiết) ──
+if [ "$DEPS_CHANGED" = true ]; then
+    echo "  ⚙️  Infra thay đổi (Dockerfile/requirements/docker-compose) → Rebuild toàn bộ..."
+    docker compose build
     docker compose up -d
-    echo "✅ Toàn bộ stack đã được rebuild và khởi động lại."
+    echo "  ✅ Toàn bộ stack đã rebuild xong."
 
 else
-    SERVICES_TO_REBUILD=""
+    # ── Case B: Chỉ source code thay đổi ──────────────────────────────────
 
     if [ "$BACKEND_CHANGED" = true ]; then
-        SERVICES_TO_REBUILD="$SERVICES_TO_REBUILD api worker"
+        echo "  🐍 Backend thay đổi → Copy file trực tiếp + restart (không rebuild image)..."
+        # Copy toàn bộ backend/app vào container đang chạy — Python không cần compile
+        docker cp backend/app/. api:/app/app/    2>/dev/null || true
+        docker cp backend/app/. worker:/app/app/ 2>/dev/null || true
+        docker restart api worker
+        echo "  ✅ api + worker đã restart (~10s)"
     fi
 
     if [ "$FRONTEND_CHANGED" = true ]; then
-        SERVICES_TO_REBUILD="$SERVICES_TO_REBUILD frontend"
+        echo "  ⚛️  Frontend thay đổi → Build với Docker cache (nhanh hơn --no-cache)..."
+        # Dùng cache — layer node_modules được tái sử dụng nếu package.json không đổi
+        docker compose build frontend
+        docker compose up -d --no-deps frontend
+        echo "  ✅ frontend đã rebuild xong."
     fi
 
-    if [ -z "$SERVICES_TO_REBUILD" ]; then
-        echo "3. Không có service nào cần rebuild (chỉ docs/scripts thay đổi)."
-    else
-        echo "3. Rebuilding service(s):$SERVICES_TO_REBUILD ..."
-        # Build image mới cho từng service
-        docker compose build --no-cache $SERVICES_TO_REBUILD
-
-        # Restart từng service (không down toàn stack)
-        docker compose up -d --no-deps $SERVICES_TO_REBUILD
-
-        echo "✅ Đã rebuild và restart:$SERVICES_TO_REBUILD"
+    if [ "$BACKEND_CHANGED" = false ] && [ "$FRONTEND_CHANGED" = false ]; then
+        echo "  ℹ️  Chỉ có docs/scripts thay đổi — không cần restart gì cả."
     fi
 fi
 
-# ── 4. Dọn dẹp image cũ không dùng ──────────────────────────────────────────
+# ── 4. Dọn dẹp image cũ ──────────────────────────────────────────────────────
 echo ""
 echo "4. Dọn dẹp Docker image cũ..."
 docker image prune -f
