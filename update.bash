@@ -67,10 +67,10 @@ else
     if [ "$BACKEND_CHANGED" = true ]; then
         echo "  🐍 Backend thay đổi → Copy file trực tiếp + restart (không rebuild image)..."
         # Copy toàn bộ backend/app vào container đang chạy — Python không cần compile
-        docker cp backend/app/. api:/app/app/    2>/dev/null || true
-        docker cp backend/app/. worker:/app/app/ 2>/dev/null || true
-        docker restart api worker
-        echo "  ✅ api + worker đã restart (~10s)"
+        docker cp backend/app/. stl_api:/app/app/    2>/dev/null || true
+        docker cp backend/app/. stl_worker:/app/app/ 2>/dev/null || true
+        docker restart stl_api stl_worker
+        echo "  ✅ stl_api + stl_worker đã restart (~10s)"
     fi
 
     if [ "$FRONTEND_CHANGED" = true ]; then
