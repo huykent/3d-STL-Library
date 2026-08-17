@@ -115,60 +115,75 @@ async def _assign_tags_to_model(session: AsyncSession, model: Model3D, keyword_s
 
 
 async def _fetch_related_images(telegram_client, chat_id: int, base_message) -> list:
-    """Fetch images that belong to the same album or are directly related to base_message."""
+    """
+    Fetch images that belong to the same album or are directly related to base_message.
+
+    Covers 3 patterns:
+      A) File + photos share the same grouped_id (Telegram Media Group / Album)
+      B) Photos posted right before the file as a separate album (Pixel 3D STL style)
+      C) Photos posted as standalone messages adjacent to the file (no grouped_id)
+    """
     from telethon.tl.types import MessageMediaPhoto
-    
-    images = []
+
+    images: list = []
     try:
         grouped_id = base_message.grouped_id
-        
-        # We need to fetch messages around the base_message (e.g. 10 messages before and after)
-        messages = await telegram_client.get_messages(chat_id, limit=20, offset_id=base_message.id + 10)
-        if not messages:
+
+        # ── Fetch messages BEFORE the base message (up to 15 messages older) ──
+        msgs_before = await telegram_client.get_messages(
+            chat_id, limit=15, offset_id=base_message.id
+        )
+        # ── Fetch messages AFTER the base message (min_id trick) ────────────
+        # get_messages with min_id returns messages NEWER than that ID
+        msgs_after = await telegram_client.get_messages(
+            chat_id, limit=15, min_id=base_message.id
+        )
+
+        all_msgs = list(msgs_before or []) + list(msgs_after or [])
+        if not all_msgs:
             return []
-        
-        for msg in messages:
+
+        for msg in all_msgs:
             if msg.id == base_message.id:
                 continue
-                
+
+            # ── Kiểm tra đây có phải ảnh không ─────────────────────────────
             is_image = False
             if isinstance(msg.media, MessageMediaPhoto):
                 is_image = True
             elif msg.document and msg.document.mime_type and msg.document.mime_type.startswith('image/'):
                 is_image = True
-                
+
             if not is_image:
                 continue
-                
+
             if grouped_id:
-                # Case 1: base_message belongs to a Telegram Media Group (Album)
-                # ONLY photos sharing the exact same grouped_id belong to this model post.
+                # Pattern A: base_message thuộc album → chỉ lấy ảnh cùng grouped_id
                 if msg.grouped_id == grouped_id:
                     images.append(msg)
             else:
-                # Case 2: base_message does NOT have a grouped_id (standalone file)
-                # a) Skip any photo that belongs to a media group (msg.grouped_id is not None)
-                if msg.grouped_id is not None:
-                    continue
-                    
-                # b) Check strict proximity (within 2 message IDs and 60 seconds) or direct reply
+                # Pattern B + C: base_message là file độc lập (không có grouped_id)
+                # Pixel 3D STL: post album ảnh trước rồi file STL sau → ảnh có grouped_id,
+                # file thì không — KHÔNG lọc bỏ msg.grouped_id is not None nữa.
                 id_diff = abs(msg.id - base_message.id)
                 time_diff = abs((msg.date - base_message.date).total_seconds())
-                
+
                 is_reply = (
                     getattr(msg, 'reply_to_msg_id', None) == base_message.id or
                     getattr(base_message, 'reply_to_msg_id', None) == msg.id
                 )
-                
-                if is_reply or (id_diff <= 2 and time_diff <= 60 and msg.sender_id == base_message.sender_id):
+                # Same sender, within ±10 message IDs, within 10 minutes
+                same_sender = msg.sender_id == base_message.sender_id
+
+                if is_reply or (same_sender and id_diff <= 10 and time_diff <= 600):
                     images.append(msg)
-                    
-        # Sort images by message ID ascending to preserve chronological order
+
+        # Sort by message ID ascending (chronological order)
         images.sort(key=lambda m: m.id)
-                    
+
     except Exception as e:
         logger.error(f"Error fetching related images: {e}")
-        
+
     return images
 
 
