@@ -2,6 +2,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { X, ChevronLeft, ChevronRight } from 'lucide-react';
 
 interface ImageLightboxProps {
@@ -13,6 +14,9 @@ interface ImageLightboxProps {
 
 export function ImageLightbox({ images, initialIndex, alt, onClose }: ImageLightboxProps) {
   const [idx, setIdx] = useState(initialIndex);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => { setMounted(true); }, []);
 
   const prev = useCallback(() => setIdx((i) => (i - 1 + images.length) % images.length), [images.length]);
   const next = useCallback(() => setIdx((i) => (i + 1) % images.length), [images.length]);
@@ -31,9 +35,11 @@ export function ImageLightbox({ images, initialIndex, alt, onClose }: ImageLight
     };
   }, [onClose, prev, next]);
 
-  return (
+  if (!mounted) return null;
+
+  const content = (
     <div
-      className="fixed inset-0 z-[999] bg-black/95 flex items-center justify-center"
+      className="fixed inset-0 z-[9999] bg-black/95 flex items-center justify-center"
       onClick={onClose}
     >
       {/* Close button */}
@@ -96,4 +102,6 @@ export function ImageLightbox({ images, initialIndex, alt, onClose }: ImageLight
       )}
     </div>
   );
+
+  return createPortal(content, document.body);
 }

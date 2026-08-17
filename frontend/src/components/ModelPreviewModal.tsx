@@ -1,15 +1,17 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { X, RotateCcw } from 'lucide-react';
 import dynamic from 'next/dynamic';
 
+// Load StlViewer with ssr:false — required for R3F Canvas in Next.js App Router
 const StlViewer = dynamic(
   () => import('@/components/StlViewer').then((mod) => mod.StlViewer),
   {
     ssr: false,
     loading: () => (
-      <div className="w-full h-full flex items-center justify-center text-gray-400 animate-pulse">
+      <div className="w-full h-full flex items-center justify-center text-gray-400 animate-pulse bg-gray-900">
         Đang tải engine 3D...
       </div>
     ),
@@ -26,10 +28,15 @@ export function ModelPreviewModal({ modelId, modelName, onClose }: ModelPreviewM
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const [mounted, setMounted] = useState(false);
+
+  // Ensure we only createPortal client-side
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     let url = '';
-
     const fetchBlob = async () => {
       try {
         const { api } = await import('@/lib/api');
@@ -42,9 +49,7 @@ export function ModelPreviewModal({ modelId, modelName, onClose }: ModelPreviewM
         setLoading(false);
       }
     };
-
     fetchBlob();
-
     return () => {
       if (url) URL.revokeObjectURL(url);
     };
@@ -62,9 +67,11 @@ export function ModelPreviewModal({ modelId, modelName, onClose }: ModelPreviewM
     };
   }, [onClose]);
 
-  return (
+  if (!mounted) return null;
+
+  const modal = (
     <div
-      className="fixed inset-0 z-[999] bg-black/90 flex items-center justify-center p-4"
+      className="fixed inset-0 z-[9999] bg-black/90 flex items-center justify-center p-4"
       onClick={onClose}
     >
       <div
@@ -72,41 +79,46 @@ export function ModelPreviewModal({ modelId, modelName, onClose }: ModelPreviewM
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-3 border-b border-white/10 bg-black/30">
-          <div className="flex items-center gap-2">
-            <RotateCcw className="w-4 h-4 text-blue-400 animate-spin" style={{ animationDuration: '4s' }} />
-            <span className="text-white font-medium text-sm truncate max-w-xs">{modelName}</span>
-            <span className="text-gray-500 text-xs">• Kéo để xoay, cuộn để zoom</span>
+        <div className="flex items-center justify-between px-5 py-3 border-b border-white/10 bg-black/30 flex-shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <RotateCcw className="w-4 h-4 text-blue-400 flex-shrink-0 animate-spin" style={{ animationDuration: '4s' }} />
+            <span className="text-white font-medium text-sm truncate">{modelName}</span>
+            <span className="text-gray-500 text-xs hidden sm:block flex-shrink-0">• Kéo để xoay, cuộn để zoom</span>
           </div>
           <button
             onClick={onClose}
-            className="bg-white/10 hover:bg-white/20 text-white rounded-full p-1.5 transition-colors"
+            className="ml-3 flex-shrink-0 bg-white/10 hover:bg-white/20 text-white rounded-full p-1.5 transition-colors"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        {/* Viewer */}
-        <div className="flex-1 relative">
+        {/* 3D Viewer — rendered in an isolated div to avoid React reconciler conflicts */}
+        <div className="flex-1 relative overflow-hidden" id="stl-viewer-root">
           {loading && (
-            <div className="absolute inset-0 flex items-center justify-center text-gray-400 animate-pulse bg-gray-900">
-              <div className="text-center">
+            <div className="absolute inset-0 flex items-center justify-center bg-gray-900 z-10">
+              <div className="text-center text-gray-400">
                 <div className="text-4xl mb-3">⬡</div>
-                <div>Đang tải file 3D...</div>
+                <div className="animate-pulse">Đang tải file 3D...</div>
               </div>
             </div>
           )}
           {error && (
-            <div className="absolute inset-0 flex items-center justify-center text-gray-500 bg-gray-900">
-              <div className="text-center">
+            <div className="absolute inset-0 flex items-center justify-center bg-gray-900 z-10">
+              <div className="text-center text-gray-500">
                 <div className="text-4xl mb-3">⚠️</div>
                 <div>Không thể tải preview 3D</div>
               </div>
             </div>
           )}
-          {blobUrl && <StlViewer modelUrl={blobUrl} />}
+          {blobUrl && !error && (
+            <StlViewer modelUrl={blobUrl} />
+          )}
         </div>
       </div>
     </div>
   );
+
+  // Mount to document.body via portal to avoid R3F / React reconciler conflict
+  return createPortal(modal, document.body);
 }
