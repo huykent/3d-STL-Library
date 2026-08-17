@@ -454,12 +454,33 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
                 try:
                     target_chat_id = int(target_chat_str.strip())
                     from telethon.errors import FloodWaitError as UploadFloodWait
+
+                    # ── Format tags thành #hashtag để tìm kiếm dễ trên Telegram ──
+                    tag_str = ""
+                    if model.ai_keywords:
+                        raw_kw = model.ai_keywords
+                        kw_list = raw_kw if isinstance(raw_kw, list) else [
+                            k.strip() for k in str(raw_kw).replace(',', ' ').split() if k.strip()
+                        ]
+                        import re as _re
+                        hashtags = [
+                            "#" + _re.sub(r'[^a-zA-Z0-9_\u00C0-\u024F\u1E00-\u1EFF]', '_', k).strip('_')
+                            for k in kw_list if k
+                        ]
+                        tag_str = " ".join(hashtags)
+
+                    # ── Tên nhóm nguồn ───────────────────────────────────────────
+                    source_label = ""
+                    if source_group:
+                        source_label = f"📢 **Nguồn:** {source_group.name}\n"
+
                     caption = (
                         f"**{model.predicted_name or model.original_filename}**\n\n"
                         f"📁 **File:** `{model.original_filename}`\n"
                         f"📊 **Faces:** {model.face_count:,}\n"
                         f"📏 **Size:** {model.bbox_x_mm:.1f} × {model.bbox_y_mm:.1f} × {model.bbox_z_mm:.1f} mm\n"
-                        f"🏷️ **Tags:** {model.ai_keywords}\n"
+                        f"{source_label}"
+                        f"\n{tag_str}"
                     )
                     
                     image_files = []
