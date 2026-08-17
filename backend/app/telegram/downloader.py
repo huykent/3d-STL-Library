@@ -1,6 +1,9 @@
 import os
 import patoolib
 import asyncio
+import logging
+
+logger = logging.getLogger(__name__)
 
 async def extract_3d_files(file_path: str, extract_dir: str) -> list[str]:
     """
@@ -35,16 +38,40 @@ async def extract_3d_files(file_path: str, extract_dir: str) -> list[str]:
         
     return extracted_3d_files
 
-async def download_telegram_document(client, message, save_dir: str, progress_callback=None) -> str:
+async def download_telegram_document(client, message, save_dir: str, progress_callback=None, status_callback=None) -> str:
     """
     Download a document from a telegram message to the given directory.
     Supports live progress callback (downloaded_bytes, total_bytes).
+    Handles Telegram FloodWait/rate-limit automatically with retry + wait.
     Returns the path to the downloaded file.
     """
+    from telethon.errors import FloodWaitError
+
     os.makedirs(save_dir, exist_ok=True)
-    return await client.download_media(
-        message.document, 
-        file=save_dir,
-        progress_callback=progress_callback
-    )
+
+    max_retries = 5
+    for attempt in range(1, max_retries + 1):
+        try:
+            result = await client.download_media(
+                message.document,
+                file=save_dir,
+                progress_callback=progress_callback
+            )
+            return result
+        except FloodWaitError as e:
+            wait_sec = e.seconds + 2  # Telegram says wait N sec, we add 2s buffer
+            logger.warning(
+                f"[FloodWait] Telegram yêu cầu chờ {e.seconds}s. "
+                f"Tự động chờ {wait_sec}s rồi thử lại (lần {attempt}/{max_retries})..."
+            )
+            if status_callback:
+                await status_callback(
+                    f"[Tạm dừng] Telegram yêu cầu chờ {e.seconds}s, "
+                    f"tự động nối lại sau {wait_sec}s..."
+                )
+            await asyncio.sleep(wait_sec)
+        except Exception:
+            raise
+
+    raise RuntimeError(f"Tải file thất bại sau {max_retries} lần thử (FloodWait liên tục)")
 

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from app.database import AsyncSessionLocal
 from app.models.source_group import SourceGroup
@@ -103,6 +104,8 @@ async def cron_crawl_history(ctx: dict) -> None:
                         )
                         logger.info(f"[CÀO LỊCH SỬ] 🚀 Đã đẩy file '{file_name}' (#{message.id}) vào hàng đợi xử lý! (Tiến độ cào nhóm: mốc ID #{new_oldest_id})")
                         found_valid_file = True
+                        # Drip-feed: chờ 2s giữa các lần enqueue để không gửi ồ ạt vào Redis
+                        await asyncio.sleep(2)
                         break # Only process 1 file per group per cron run (Drip Feed)
 
                 
@@ -168,6 +171,8 @@ async def manual_crawl_history(ctx: dict, chat_id: int, limit: int = 1) -> None:
                         chat_id=chat_id
                     )
                     files_queued += 1
+                    # Drip-feed: chờ 2s giữa các lần enqueue để không gửi ồ ạt
+                    await asyncio.sleep(2)
                     
             logger.info(f"[MANUAL CRAWL] Finished. Queued {files_queued} files.")
     except Exception as e:

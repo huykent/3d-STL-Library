@@ -33,6 +33,10 @@ from app.telegram.downloader import download_telegram_document, extract_3d_files
 
 logger = logging.getLogger(__name__)
 
+# ── Global download lock: chỉ tải 1 file Telegram tại một thời điểm ──────────
+# Giúp ngăn FloodWait do gửi quá nhiều request song song đến Telegram
+DOWNLOAD_SEMAPHORE = asyncio.Semaphore(1)
+
 from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -74,8 +78,6 @@ async def _add_log_by_id(model_id, step: str, message: str) -> None:
                 await session.commit()
     except Exception as e:
         logger.warning(f"Error in _add_log_by_id: {e}")
-
-    await session.commit()
 
 
 async def _fetch_related_images(telegram_client, chat_id: int, base_message) -> list:
@@ -247,9 +249,18 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
                     except Exception:
                         pass
 
-            tmp_file = await download_telegram_document(
-                telegram_client, tg_message, save_dir=tmp_dir, progress_callback=dl_progress_callback
-            )
+            async def _flood_wait_status_callback(msg: str):
+                """Forward FloodWait notices to the model's processing_logs."""
+                await _add_log_by_id(model.id, "[Tạm dừng]", msg)
+
+            async with DOWNLOAD_SEMAPHORE:
+                tmp_file = await download_telegram_document(
+                    telegram_client, tg_message, save_dir=tmp_dir,
+                    progress_callback=dl_progress_callback,
+                    status_callback=_flood_wait_status_callback
+                )
+                # Giãn cách 3s sau tải xong để tránh FloodWait cho file tiếp theo
+                await asyncio.sleep(3)
 
             file_size_mb = (os.path.getsize(tmp_file) / (1024 * 1024)) if os.path.exists(tmp_file) else 0
             await _add_log(session, model, "Tải file (30%)", f"[30%] Tải thành công file '{model.original_filename}' ({file_size_mb:.1f} MB) trong {time.time()-dl_start:.1f}s", path=tmp_file)
@@ -380,6 +391,7 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
             if target_chat_str and tmp_file and os.path.exists(tmp_file):
                 try:
                     target_chat_id = int(target_chat_str.strip())
+                    from telethon.errors import FloodWaitError as UploadFloodWait
                     caption = (
                         f"**{model.predicted_name or model.original_filename}**\n\n"
                         f"📁 **File:** `{model.original_filename}`\n"
@@ -397,31 +409,61 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
                                 
                     if image_files:
                         await _add_log(session, model, "Backup (98%)", f"[98%] Đang upload album ({len(image_files)} ảnh) + file 3D sang nhóm đích ({target_chat_id})...")
-                        
-                        album_msgs = await telegram_client.send_file(
-                            target_chat_id, 
-                            image_files,
-                            caption=caption
-                        )
+
+                        upload_retries = 3
+                        for uattempt in range(1, upload_retries + 1):
+                            try:
+                                album_msgs = await telegram_client.send_file(
+                                    target_chat_id,
+                                    image_files,
+                                    caption=caption
+                                )
+                                break
+                            except UploadFloodWait as fe:
+                                wait_sec = fe.seconds + 2
+                                logger.warning(f"[FloodWait Upload Album] Chờ {wait_sec}s (lần {uattempt}/{upload_retries})")
+                                await _add_log_by_id(model.id, "[Tạm dừng]", f"[Upload Album] Telegram yêu cầu chờ {fe.seconds}s, tự động nối lại...")
+                                await asyncio.sleep(wait_sec)
                         
                         reply_to_msg_id = album_msgs[0].id if isinstance(album_msgs, list) else album_msgs.id
                         from telethon.tl.types import DocumentAttributeFilename
-                        doc_msg = await telegram_client.send_file(
-                            target_chat_id, 
-                            tmp_file,
-                            reply_to=reply_to_msg_id,
-                            attributes=[DocumentAttributeFilename(file_name=model.original_filename)]
-                        )
+
+                        for uattempt in range(1, upload_retries + 1):
+                            try:
+                                doc_msg = await telegram_client.send_file(
+                                    target_chat_id,
+                                    tmp_file,
+                                    reply_to=reply_to_msg_id,
+                                    attributes=[DocumentAttributeFilename(file_name=model.original_filename)]
+                                )
+                                break
+                            except UploadFloodWait as fe:
+                                wait_sec = fe.seconds + 2
+                                logger.warning(f"[FloodWait Upload File] Chờ {wait_sec}s (lần {uattempt}/{upload_retries})")
+                                await _add_log_by_id(model.id, "[Tạm dừng]", f"[Upload File] Telegram yêu cầu chờ {fe.seconds}s, tự động nối lại...")
+                                await asyncio.sleep(wait_sec)
+
                         if doc_msg and doc_msg.document:
                             model.telegram_file_id = str(doc_msg.document.id)
                     else:
                         await _add_log(session, model, "Backup (98%)", f"[98%] Đang upload file 3D kèm mô tả sang nhóm đích ({target_chat_id})...")
-                        tg_msg = await telegram_client.send_file(
-                            target_chat_id, 
-                            tmp_file, 
-                            thumb=thumb_path if os.path.exists(thumb_path) else None,
-                            caption=caption
-                        )
+
+                        upload_retries = 3
+                        for uattempt in range(1, upload_retries + 1):
+                            try:
+                                tg_msg = await telegram_client.send_file(
+                                    target_chat_id,
+                                    tmp_file,
+                                    thumb=thumb_path if os.path.exists(thumb_path) else None,
+                                    caption=caption
+                                )
+                                break
+                            except UploadFloodWait as fe:
+                                wait_sec = fe.seconds + 2
+                                logger.warning(f"[FloodWait Upload] Chờ {wait_sec}s (lần {uattempt}/{upload_retries})")
+                                await _add_log_by_id(model.id, "[Tạm dừng]", f"[Upload] Telegram yêu cầu chờ {fe.seconds}s, tự động nối lại...")
+                                await asyncio.sleep(wait_sec)
+
                         if tg_msg and tg_msg.document:
                             model.telegram_file_id = str(tg_msg.document.id)
 
