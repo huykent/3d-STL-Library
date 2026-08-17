@@ -3,9 +3,12 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { FiDownload, FiTrash2, FiEdit3 } from 'react-icons/fi';
+import { Maximize2, Box } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { ImageLightbox } from '@/components/ImageLightbox';
+import { ModelPreviewModal } from '@/components/ModelPreviewModal';
 
 export interface Model3D {
   id: string;
@@ -23,6 +26,9 @@ export interface Model3D {
   ai_print_type?: string;
   processing_status: string;
   processing_logs?: any[];
+  bbox_x_mm?: number;
+  bbox_y_mm?: number;
+  bbox_z_mm?: number;
   tags?: { id: number; name: string; slug: string }[];
 }
 
@@ -38,9 +44,10 @@ interface CarouselProps {
   processingStatus: string;
   detailLevel?: string;
   partCount?: number;
+  onImageClick: (idx: number) => void;
 }
 
-function ImageCarousel({ images, alt, processingStatus, detailLevel, partCount }: CarouselProps) {
+function ImageCarousel({ images, alt, processingStatus, detailLevel, partCount, onImageClick }: CarouselProps) {
   const [idx, setIdx] = useState(0);
 
   const prev = (e: React.MouseEvent) => {
@@ -61,36 +68,57 @@ function ImageCarousel({ images, alt, processingStatus, detailLevel, partCount }
     setIdx(n);
   };
 
+  const handleImageClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    onImageClick(idx);
+  };
+
   return (
     <div className="aspect-video bg-black/40 relative overflow-hidden flex items-center justify-center shrink-0">
       {images.length > 0 ? (
         <>
-          <img
-            src={images[idx]}
-            alt={`${alt} — ảnh ${idx + 1}/${images.length}`}
-            className="object-cover w-full h-full group-hover:scale-105 transition-transform duration-500"
-          />
+          {/* Clickable image → opens lightbox */}
+          <button
+            onClick={handleImageClick}
+            className="absolute inset-0 w-full h-full cursor-zoom-in z-[1]"
+            title="Xem ảnh lớn"
+          >
+            <img
+              src={images[idx]}
+              alt={`${alt} — ảnh ${idx + 1}/${images.length}`}
+              className="object-cover w-full h-full group-hover:scale-105 transition-transform duration-500"
+              draggable={false}
+            />
+          </button>
+
+          {/* Expand icon hint */}
+          <div className="absolute top-2 right-2 z-[5] opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+            <div className="bg-black/60 text-white rounded-md p-1">
+              <Maximize2 className="w-3.5 h-3.5" />
+            </div>
+          </div>
 
           {/* Prev / Next — only when multiple images */}
           {images.length > 1 && (
             <>
               <button
                 onClick={prev}
-                className="absolute left-1 top-1/2 -translate-y-1/2 z-20 bg-black/50 hover:bg-black/80 text-white rounded-full w-7 h-7 flex items-center justify-center text-lg leading-none opacity-0 group-hover:opacity-100 transition-opacity"
+                className="absolute left-1 top-1/2 -translate-y-1/2 z-[6] bg-black/50 hover:bg-black/80 text-white rounded-full w-7 h-7 flex items-center justify-center text-lg leading-none opacity-0 group-hover:opacity-100 transition-opacity"
                 title="Ảnh trước"
               >
                 ‹
               </button>
               <button
                 onClick={next}
-                className="absolute right-1 top-1/2 -translate-y-1/2 z-20 bg-black/50 hover:bg-black/80 text-white rounded-full w-7 h-7 flex items-center justify-center text-lg leading-none opacity-0 group-hover:opacity-100 transition-opacity"
+                className="absolute right-1 top-1/2 -translate-y-1/2 z-[6] bg-black/50 hover:bg-black/80 text-white rounded-full w-7 h-7 flex items-center justify-center text-lg leading-none opacity-0 group-hover:opacity-100 transition-opacity"
                 title="Ảnh tiếp"
               >
                 ›
               </button>
 
               {/* Dot indicators */}
-              <div className="absolute bottom-2 left-0 right-0 flex justify-center gap-1 z-20 opacity-0 group-hover:opacity-100 transition-opacity">
+              <div className="absolute bottom-2 left-0 right-0 flex justify-center gap-1 z-[6] opacity-0 group-hover:opacity-100 transition-opacity">
                 {images.map((_, i) => (
                   <button
                     key={i}
@@ -103,7 +131,7 @@ function ImageCarousel({ images, alt, processingStatus, detailLevel, partCount }
               </div>
 
               {/* Counter badge */}
-              <div className="absolute top-2 left-2 z-20 bg-black/60 text-white text-[10px] font-medium px-1.5 py-0.5 rounded-full backdrop-blur-sm pointer-events-none">
+              <div className="absolute top-2 left-2 z-[5] bg-black/60 text-white text-[10px] font-medium px-1.5 py-0.5 rounded-full backdrop-blur-sm pointer-events-none">
                 {idx + 1}/{images.length}
               </div>
             </>
@@ -121,7 +149,7 @@ function ImageCarousel({ images, alt, processingStatus, detailLevel, partCount }
 
       {/* Detail level / part count badges */}
       {detailLevel && (
-        <div className="absolute top-3 right-3 flex flex-col gap-2 z-10">
+        <div className="absolute top-3 right-3 flex flex-col gap-2 z-[2] pointer-events-none">
           {partCount && partCount > 1 && (
             <Badge variant="secondary" className="bg-blue-600/80 text-white border-white/10 backdrop-blur-md">
               {partCount} parts
@@ -139,6 +167,7 @@ function ImageCarousel({ images, alt, processingStatus, detailLevel, partCount }
 // ── Main ModelCard component ───────────────────────────────────────────────────
 export function ModelCard({ model, onDelete }: ModelCardProps) {
   const displayName = model.predicted_name || model.original_filename;
+  const isCompleted = model.processing_status === 'completed';
 
   // Build full image list: image_urls first, then thumbnail as last resort
   const allImages: string[] = [];
@@ -149,107 +178,147 @@ export function ModelCard({ model, onDelete }: ModelCardProps) {
     allImages.push(model.thumbnail_url);
   }
 
+  const [lightboxIdx, setLightboxIdx] = useState<number | null>(null);
+  const [show3D, setShow3D] = useState(false);
+
   return (
-    <Card className="overflow-hidden bg-white/5 border-white/10 hover:border-blue-500/50 hover:bg-white/10 backdrop-blur-md transition-all shadow-md group flex flex-col h-full relative p-0">
+    <>
+      <Card className="overflow-hidden bg-white/5 border-white/10 hover:border-blue-500/50 hover:bg-white/10 backdrop-blur-md transition-all shadow-md group flex flex-col h-full relative p-0">
 
-      {/* Hover Action Overlay */}
-      <div className="absolute top-0 left-0 w-full h-full bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-300 z-10 flex items-center justify-center gap-4 backdrop-blur-[2px]">
-        <Button
-          size="icon"
-          onClick={async (e) => {
-            e.preventDefault();
-            try {
-              const { recordHistory } = await import('@/lib/api');
-              await recordHistory(model.id);
-            } catch (err) {
-              console.error(err);
-            }
-            window.open(`/api/models/${model.id}/download`, '_blank');
-          }}
-          className="bg-blue-600 hover:bg-blue-500 text-white rounded-full transition-transform hover:scale-110"
-          title="Download"
-        >
-          <FiDownload className="w-4 h-4" />
-        </Button>
+        {/* Hover Action Overlay */}
+        <div className="absolute top-0 left-0 w-full h-full bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-300 z-10 flex items-center justify-center gap-3 backdrop-blur-[2px]">
+          {/* 3D Preview button — only if completed */}
+          {isCompleted && (
+            <Button
+              size="icon"
+              onClick={(e) => {
+                e.preventDefault();
+                setShow3D(true);
+              }}
+              className="bg-purple-600 hover:bg-purple-500 text-white rounded-full transition-transform hover:scale-110"
+              title="Preview 3D"
+            >
+              <Box className="w-4 h-4" />
+            </Button>
+          )}
 
-        <Button
-          size="icon"
-          variant="secondary"
-          onClick={async (e) => {
-            e.preventDefault();
-            try {
-              const { addFavorite } = await import('@/lib/api');
-              const res = await addFavorite(model.id);
-              if (res.status === 'added') alert('Added to favorites!');
-              else if (res.status === 'already_exists') alert('Already in favorites!');
-            } catch (err) {
-              console.error(err);
-            }
-          }}
-          className="rounded-full shadow-lg transition-transform hover:scale-110 text-pink-500 hover:text-pink-400"
-          title="Add to Favorites"
-        >
-          <svg stroke="currentColor" fill="currentColor" strokeWidth="0" viewBox="0 0 512 512" height="1em" width="1em" xmlns="http://www.w3.org/2000/svg">
-            <path d="M462.3 62.6C407.5 15.9 326 24.3 275.7 76.2L256 96.5l-19.7-20.3C186.1 24.3 104.5 15.9 49.7 62.6c-62.8 53.6-66.1 149.8-9.9 207.9l193.5 199.8c12.5 12.9 32.8 12.9 45.3 0l193.5-199.8c56.3-58.1 53-154.3-9.8-207.9z" />
-          </svg>
-        </Button>
+          <Button
+            size="icon"
+            onClick={async (e) => {
+              e.preventDefault();
+              try {
+                const { recordHistory } = await import('@/lib/api');
+                await recordHistory(model.id);
+              } catch (err) {
+                console.error(err);
+              }
+              window.open(`/api/models/${model.id}/download`, '_blank');
+            }}
+            className="bg-blue-600 hover:bg-blue-500 text-white rounded-full transition-transform hover:scale-110"
+            title="Download"
+          >
+            <FiDownload className="w-4 h-4" />
+          </Button>
 
-        <Link href={`/dashboard/models/${model.id}`}>
           <Button
             size="icon"
             variant="secondary"
-            className="rounded-full shadow-lg transition-transform hover:scale-110"
-            title="View Details"
+            onClick={async (e) => {
+              e.preventDefault();
+              try {
+                const { addFavorite } = await import('@/lib/api');
+                const res = await addFavorite(model.id);
+                if (res.status === 'added') alert('Added to favorites!');
+                else if (res.status === 'already_exists') alert('Already in favorites!');
+              } catch (err) {
+                console.error(err);
+              }
+            }}
+            className="rounded-full shadow-lg transition-transform hover:scale-110 text-pink-500 hover:text-pink-400"
+            title="Add to Favorites"
           >
-            <FiEdit3 className="w-4 h-4" />
+            <svg stroke="currentColor" fill="currentColor" strokeWidth="0" viewBox="0 0 512 512" height="1em" width="1em" xmlns="http://www.w3.org/2000/svg">
+              <path d="M462.3 62.6C407.5 15.9 326 24.3 275.7 76.2L256 96.5l-19.7-20.3C186.1 24.3 104.5 15.9 49.7 62.6c-62.8 53.6-66.1 149.8-9.9 207.9l193.5 199.8c12.5 12.9 32.8 12.9 45.3 0l193.5-199.8c56.3-58.1 53-154.3-9.8-207.9z" />
+            </svg>
           </Button>
+
+          <Link href={`/dashboard/models/${model.id}`}>
+            <Button
+              size="icon"
+              variant="secondary"
+              className="rounded-full shadow-lg transition-transform hover:scale-110"
+              title="View Details"
+            >
+              <FiEdit3 className="w-4 h-4" />
+            </Button>
+          </Link>
+
+          <Button
+            size="icon"
+            variant="destructive"
+            onClick={(e) => {
+              e.preventDefault();
+              if (onDelete && window.confirm('Are you sure you want to delete this model?')) {
+                onDelete(model.id);
+              }
+            }}
+            className="rounded-full transition-transform hover:scale-110"
+            title="Delete"
+          >
+            <FiTrash2 className="w-4 h-4" />
+          </Button>
+        </div>
+
+        <Link href={`/dashboard/models/${model.id}`} className="flex flex-col h-full z-0">
+          {/* Image Carousel — click opens lightbox */}
+          <ImageCarousel
+            images={allImages}
+            alt={displayName}
+            processingStatus={model.processing_status}
+            detailLevel={model.detail_level}
+            partCount={model.part_count}
+            onImageClick={(i) => setLightboxIdx(i)}
+          />
+
+          {/* Content area */}
+          <CardContent className="p-4 flex flex-col flex-grow">
+            <h3 className="text-gray-100 font-semibold truncate mb-1" title={displayName}>
+              {displayName}
+            </h3>
+            <p className="text-xs text-gray-500 truncate mb-4" title={model.original_filename}>
+              {model.original_filename}
+            </p>
+
+            <div className="mt-auto flex items-center justify-between">
+              <Badge variant="outline" className="bg-blue-500/10 border-blue-500/30 text-blue-400">
+                {model.ai_category || 'Uncategorized'}
+              </Badge>
+              <span className="text-xs font-medium text-gray-400">
+                {model.face_count ? `${(model.face_count / 1000).toFixed(1)}k faces` : '??? faces'}
+              </span>
+            </div>
+          </CardContent>
         </Link>
+      </Card>
 
-        <Button
-          size="icon"
-          variant="destructive"
-          onClick={(e) => {
-            e.preventDefault();
-            if (onDelete && window.confirm('Are you sure you want to delete this model?')) {
-              onDelete(model.id);
-            }
-          }}
-          className="rounded-full transition-transform hover:scale-110"
-          title="Delete"
-        >
-          <FiTrash2 className="w-4 h-4" />
-        </Button>
-      </div>
-
-      <Link href={`/dashboard/models/${model.id}`} className="flex flex-col h-full z-0">
-        {/* Image Carousel */}
-        <ImageCarousel
+      {/* Image Lightbox */}
+      {lightboxIdx !== null && allImages.length > 0 && (
+        <ImageLightbox
           images={allImages}
+          initialIndex={lightboxIdx}
           alt={displayName}
-          processingStatus={model.processing_status}
-          detailLevel={model.detail_level}
-          partCount={model.part_count}
+          onClose={() => setLightboxIdx(null)}
         />
+      )}
 
-        {/* Content area */}
-        <CardContent className="p-4 flex flex-col flex-grow">
-          <h3 className="text-gray-100 font-semibold truncate mb-1" title={displayName}>
-            {displayName}
-          </h3>
-          <p className="text-xs text-gray-500 truncate mb-4" title={model.original_filename}>
-            {model.original_filename}
-          </p>
-
-          <div className="mt-auto flex items-center justify-between">
-            <Badge variant="outline" className="bg-blue-500/10 border-blue-500/30 text-blue-400">
-              {model.ai_category || 'Uncategorized'}
-            </Badge>
-            <span className="text-xs font-medium text-gray-400">
-              {model.face_count ? `${(model.face_count / 1000).toFixed(1)}k faces` : '??? faces'}
-            </span>
-          </div>
-        </CardContent>
-      </Link>
-    </Card>
+      {/* 3D Preview Modal */}
+      {show3D && (
+        <ModelPreviewModal
+          modelId={model.id}
+          modelName={displayName}
+          onClose={() => setShow3D(false)}
+        />
+      )}
+    </>
   );
 }
