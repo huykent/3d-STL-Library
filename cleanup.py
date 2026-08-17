@@ -4,18 +4,20 @@ Maintenance script: chạy trực tiếp trên VPS trong container api/worker.
 Dọn zombie models (stuck processing) và xóa model thất bại không phục hồi được.
 
 Dùng:
-  docker exec api python /tmp/cleanup.py --dry-run   # xem trước
-  docker exec api python /tmp/cleanup.py             # thực thi
+  docker exec stl_api python /tmp/cleanup.py --dry-run    # xem trước
+  docker exec stl_api python /tmp/cleanup.py               # thực thi
+  docker exec stl_api python /tmp/cleanup.py --reset-all   # reset ALL processing→pending ngay
 """
 import asyncio
 import sys
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 DRY_RUN = "--dry-run" in sys.argv
+RESET_ALL = "--reset-all" in sys.argv  # Reset toàn bộ processing→pending, bỏ qua time check
 
 # ── Thời gian giới hạn: model processing > N phút → zombie ─────────────────
-STUCK_MINUTES = 30          # Nếu processing > 30 phút → zombie → reset về pending
+STUCK_MINUTES = 15          # Nếu processing > 15 phút → zombie → reset về pending
 MAX_RETRIES = 5             # Nếu retried >= 5 lần → không cứu được → xóa
 FAILED_KEEP_DAYS = 7        # Model failed > 7 ngày → xóa
 
@@ -29,6 +31,8 @@ async def main():
     print("=" * 60)
     print("  3D STL Library — Database Maintenance")
     print(f"  Mode: {'DRY RUN (không thay đổi gì)' if DRY_RUN else '⚠️  LIVE (thực thi)'}")
+    if RESET_ALL:
+        print("  ⚡ --reset-all: Reset TẤT CẢ processing → pending")
     print("=" * 60)
 
     async with AsyncSessionLocal() as session:
@@ -45,15 +49,25 @@ async def main():
         print(f"   {'TOTAL':12s}: {total:,}")
 
         # ── 2. Zombie models: stuck in "processing" > STUCK_MINUTES ─────────
-        cutoff_zombie = datetime.utcnow() - timedelta(minutes=STUCK_MINUTES)
-        zombie_q = await session.execute(
-            select(Model3D).where(
-                Model3D.processing_status == ProcessingStatus.processing,
-                Model3D.updated_at < cutoff_zombie
+        now_utc = datetime.now(timezone.utc).replace(tzinfo=None)  # naive UTC
+        cutoff_zombie = now_utc - timedelta(minutes=STUCK_MINUTES)
+
+        if RESET_ALL:
+            # Reset ALL processing models regardless of time
+            all_processing_q = await session.execute(
+                select(Model3D).where(Model3D.processing_status == ProcessingStatus.processing)
             )
-        )
-        zombies = zombie_q.scalars().all()
-        print(f"\n🧟 Zombie models (processing > {STUCK_MINUTES} phút): {len(zombies)}")
+            zombies = all_processing_q.scalars().all()
+            print(f"\n⚡ --reset-all: Tìm thấy {len(zombies)} model đang processing (sẽ reset hết)")
+        else:
+            zombie_q = await session.execute(
+                select(Model3D).where(
+                    Model3D.processing_status == ProcessingStatus.processing,
+                    Model3D.updated_at < cutoff_zombie
+                )
+            )
+            zombies = zombie_q.scalars().all()
+            print(f"\n🧟 Zombie models (processing > {STUCK_MINUTES} phút): {len(zombies)}")
 
         reset_to_pending = []
         mark_failed = []
@@ -81,7 +95,7 @@ async def main():
             print(f"   ... và {len(perm_failed)-10} model khác")
 
         # ── 4. Old failed: failed > FAILED_KEEP_DAYS days ───────────────────
-        cutoff_old = datetime.utcnow() - timedelta(days=FAILED_KEEP_DAYS)
+        cutoff_old = now_utc - timedelta(days=FAILED_KEEP_DAYS)
         old_failed_q = await session.execute(
             select(Model3D).where(
                 Model3D.processing_status == ProcessingStatus.failed,
