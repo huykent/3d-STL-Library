@@ -80,6 +80,40 @@ async def _add_log_by_id(model_id, step: str, message: str) -> None:
         logger.warning(f"Error in _add_log_by_id: {e}")
 
 
+async def _assign_tags_to_model(session: AsyncSession, model: Model3D, keyword_str: str) -> None:
+    """Parse keyword string, upsert Tag records, and assign them to model.tags."""
+    import re as _re
+    from app.models.tag import Tag
+    from sqlalchemy import select as _select
+
+    if not keyword_str:
+        return
+
+    raw_names = [k.strip().lower() for k in keyword_str.replace(',', ' ').split() if k.strip()]
+    # De-duplicate while preserving order
+    seen: set = set()
+    tag_names = [n for n in raw_names if not (n in seen or seen.add(n))]  # type: ignore[func-returns-value]
+
+    if not tag_names:
+        return
+
+    # Fetch existing tags in one query
+    existing_q = await session.execute(_select(Tag).where(Tag.name.in_(tag_names)))
+    existing_map = {t.name: t for t in existing_q.scalars().all()}
+
+    assigned: list = []
+    for name in tag_names:
+        if name in existing_map:
+            tag = existing_map[name]
+        else:
+            slug = _re.sub(r'[^a-z0-9]+', '-', name).strip('-')
+            tag = Tag(name=name, slug=slug)
+            session.add(tag)
+        assigned.append(tag)
+
+    model.tags = assigned
+
+
 async def _fetch_related_images(telegram_client, chat_id: int, base_message) -> list:
     """Fetch images that belong to the same album or are directly related to base_message."""
     from telethon.tl.types import MessageMediaPhoto
@@ -369,6 +403,33 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
                 model.ai_keywords = ai_result.keywords
                 model.ai_raw_response = ai_result.raw_response
 
+            # ── Inject tên nhóm nguồn vào keywords ───────────────────────
+            # Lấy tên nhóm từ DB (source_group đã được load ở trên)
+            group_tag_name: str | None = None
+            if source_group:
+                group_tag_name = source_group.name
+            elif internal_sg_id:
+                # Fallback: reload nếu chưa có
+                from app.models.source_group import SourceGroup as _SG
+                sg_r = await session.execute(select(_SG).where(_SG.id == internal_sg_id))
+                sg_obj = sg_r.scalar_one_or_none()
+                if sg_obj:
+                    group_tag_name = sg_obj.name
+
+            if group_tag_name:
+                existing_kw = model.ai_keywords or ""
+                if isinstance(existing_kw, list):
+                    existing_kw = ", ".join(existing_kw)
+                # Gắn thêm tên nhóm vào cuối keyword list
+                merged_kw = f"{existing_kw}, {group_tag_name}" if existing_kw.strip() else group_tag_name
+                model.ai_keywords = merged_kw
+                await _add_log(session, model, "Tag nhóm", f"Đã gắn tag nguồn: '{group_tag_name}'")
+
+            # ── Gắn Tag vào DB (upsert) ───────────────────────────────────
+            if model.ai_keywords:
+                kw_str = model.ai_keywords if isinstance(model.ai_keywords, str) else ", ".join(model.ai_keywords)
+                await _assign_tags_to_model(session, model, kw_str)
+
             # ── Step 5: Persist results to DB (95%) ───────────────────────
             model.vertex_count = analysis.vertex_count
             model.face_count = analysis.face_count
@@ -381,6 +442,7 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
 
             model.processing_status = ProcessingStatus.completed
             model.processing_error = None
+
 
             # ── Step 6: Upload to Target Group (98%) ───────────────────────
             from app.services.settings import SettingsService
