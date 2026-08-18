@@ -1,6 +1,7 @@
 """Models router: GET /api/models, /api/models/{id}, /api/models/{id}/thumbnail."""
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Annotated, Optional
 
@@ -16,6 +17,7 @@ from app.models.model3d import DetailLevel, Model3D, PrintType
 from app.models.user import User
 from app.schemas.model3d import FilterParams, Model3DList, Model3DOut
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
