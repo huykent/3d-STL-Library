@@ -449,3 +449,48 @@ async def delete_model(
                 
     await db.delete(model)
     await db.commit()
+
+
+@router.post(
+    "/{model_id}/reprocess",
+    summary="Re-enqueue a single 3D model for reprocessing & target group upload (admin only)",
+)
+async def reprocess_single_model(
+    model_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(get_current_active_admin),
+):
+    from app.models.source_group import SourceGroup
+    from app.worker.queue import get_redis_pool
+
+    stmt = (
+        select(Model3D, SourceGroup.chat_id)
+        .outerjoin(SourceGroup, Model3D.source_group_id == SourceGroup.id)
+        .where(Model3D.id == model_id)
+    )
+    res = await db.execute(stmt)
+    row = res.first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Model not found")
+
+    model, real_chat_id = row
+    if not real_chat_id:
+        raise HTTPException(status_code=400, detail="Model source group not found")
+
+    model.processing_status = ProcessingStatus.pending
+    model.processing_error = None
+    model.telegram_file_id = None  # Reset file_id to force target channel upload
+    await db.commit()
+
+    redis = await get_redis_pool()
+    await redis.enqueue_job(
+        'process_telegram_message',
+        message_id=model.telegram_message_id,
+        chat_id=real_chat_id
+    )
+
+    return {
+        "status": "success",
+        "message": f"Enqueued model '{model.original_filename}' (#{model.telegram_message_id}) for reprocessing and target group upload!",
+        "model_id": str(model.id)
+    }
