@@ -315,15 +315,18 @@ async def get_album_image(
 
 @router.get(
     "/{model_id}/download",
-    summary="Stream the original 3D file directly from Telegram",
+    summary="Stream or download the original 3D file at maximum speed",
 )
 async def download_model(
     model_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ):
-    """Stream the original STL/OBJ file from Telegram without storing it locally."""
-    from fastapi.responses import StreamingResponse
+    """Download the original 3D file with high-speed multi-connection pre-buffering and FileResponse."""
+    import os
+    from fastapi.responses import FileResponse, StreamingResponse
+    from app.config import get_settings
     from app.telegram.client import get_telegram_client
+    from app.telegram.downloader import download_telegram_document
     from app.services.telegram_storage import stream_file_from_telegram
     from app.models.source_group import SourceGroup
 
@@ -337,16 +340,52 @@ async def download_model(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Model not found")
 
     model, chat_id = row
+    filename = model.original_filename or "model.stl"
+    settings = get_settings()
 
+    # 1. Kiểm tra xem file tạm đã có sẵn trên VPS disk chưa
+    tmp_dir = os.path.join(settings.TEMP_DIR, "web_downloads", str(model.id))
+    existing_file = None
+    if os.path.exists(tmp_dir):
+        files = os.listdir(tmp_dir)
+        if files:
+            existing_file = os.path.join(tmp_dir, files[0])
+
+    if existing_file and os.path.exists(existing_file) and (not model.file_size_bytes or os.path.getsize(existing_file) == model.file_size_bytes):
+        return FileResponse(
+            existing_file,
+            filename=filename,
+            media_type="application/octet-stream"
+        )
+
+    # 2. Thử kéo file về VPS đệm bằng FastTelethon 8 luồng song song
     client = await get_telegram_client()
+    tg_msg = None
+    if chat_id and model.telegram_message_id:
+        try:
+            tg_msg = await client.get_messages(chat_id, ids=model.telegram_message_id)
+        except Exception as e:
+            logger.warning(f"Could not fetch msg for fast download: {e}")
+
+    if tg_msg and tg_msg.document:
+        try:
+            downloaded_path = await download_telegram_document(client, tg_msg, tmp_dir)
+            if downloaded_path and os.path.exists(downloaded_path):
+                return FileResponse(
+                    downloaded_path,
+                    filename=filename,
+                    media_type="application/octet-stream"
+                )
+        except Exception as e:
+            logger.warning(f"FastDownload to temp file failed: {e}. Fallback to direct stream.")
+
+    # 3. Fallback: Direct StreamingResponse
     stream = stream_file_from_telegram(
         client=client, 
         chat_id=chat_id, 
         message_id=model.telegram_message_id, 
         file_id_fallback=model.telegram_file_id
     )
-
-    filename = model.original_filename or "model.stl"
 
     headers = {
         "Content-Disposition": f'attachment; filename="{filename}"',
