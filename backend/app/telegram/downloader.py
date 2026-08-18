@@ -65,9 +65,16 @@ async def fast_download_document(
     if status_callback:
         await status_callback(f"[Siêu tốc FastTelethon] Khởi tạo {connection_count} luồng tải song song...")
 
+    senders = []
     try:
         dc_id, location = utils.get_input_location(doc)
-        senders = await client._get_response_senders(dc_id, connection_count)
+        for _ in range(connection_count):
+            try:
+                s = await client._borrow_sender(dc_id)
+                senders.append(s)
+            except Exception as se:
+                logger.warning(f"Could not borrow sender for dc_id {dc_id}: {se}")
+                break
     except Exception as e:
         logger.warning(f"[FastDownload] Không thể khởi tạo luồng song song: {e}. Fallback về tải tiêu chuẩn.")
         return False
@@ -142,6 +149,12 @@ async def fast_download_document(
     except Exception as exc:
         logger.warning(f"[FastDownload] Lỗi trong quá trình tải song song: {exc}. Fallback về tiêu chuẩn.")
         return False
+    finally:
+        for s in senders:
+            try:
+                await client._return_sender(s)
+            except Exception:
+                pass
 
 
 async def download_telegram_document(client, message, save_dir: str, progress_callback=None, status_callback=None) -> str:
