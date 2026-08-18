@@ -492,9 +492,23 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
             if not target_chat_str:
                 target_chat_str = settings.TELEGRAM_TARGET_CHAT_ID
                 
-            if target_chat_str and tmp_file and os.path.exists(tmp_file):
+            if target_chat_str:
                 try:
                     target_chat_id = int(target_chat_str.strip())
+                    
+                    # Target entity resolution
+                    try:
+                        target_entity = await telegram_client.get_entity(target_chat_id)
+                    except Exception as ge_err:
+                        logger.warning(f"Could not resolve Telegram entity for {target_chat_id}: {ge_err}")
+                        target_entity = target_chat_id
+
+                    # Check if tmp_file exists; if missing, re-download from Telegram
+                    if not tmp_file or not os.path.exists(tmp_file):
+                        await _add_log(session, model, "Backup (Tải lại)", "[97%] Đang tải lại file từ Telegram để upload sang nhóm đích...")
+                        tmp_dir = os.path.join(settings.TEMP_DIR, str(model.id))
+                        tmp_file = await download_telegram_document(telegram_client, tg_message, tmp_dir)
+
                     from telethon.errors import FloodWaitError as UploadFloodWait
 
                     # ── Format tags thành #hashtag để tìm kiếm dễ trên Telegram ──
@@ -516,11 +530,17 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
                     if source_group:
                         source_label = f"📢 **Nguồn:** {source_group.name}\n"
 
+                    # Safe formatting for face_count and bounding box
+                    faces_str = f"{model.face_count:,}" if model.face_count is not None else "N/A"
+                    bx = model.bbox_x_mm or 0.0
+                    by = model.bbox_y_mm or 0.0
+                    bz = model.bbox_z_mm or 0.0
+
                     caption = (
                         f"**{model.predicted_name or model.original_filename}**\n\n"
                         f"📁 **File:** `{model.original_filename}`\n"
-                        f"📊 **Faces:** {model.face_count:,}\n"
-                        f"📏 **Size:** {model.bbox_x_mm:.1f} × {model.bbox_y_mm:.1f} × {model.bbox_z_mm:.1f} mm\n"
+                        f"📊 **Faces:** {faces_str}\n"
+                        f"📏 **Size:** {bx:.1f} × {by:.1f} × {bz:.1f} mm\n"
                         f"{source_label}"
                         f"\n{tag_str}"
                     )
@@ -536,10 +556,11 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
                         await _add_log(session, model, "Backup (98%)", f"[98%] Đang upload album ({len(image_files)} ảnh) + file 3D sang nhóm đích ({target_chat_id})...")
 
                         upload_retries = 3
+                        album_msgs = None
                         for uattempt in range(1, upload_retries + 1):
                             try:
                                 album_msgs = await telegram_client.send_file(
-                                    target_chat_id,
+                                    target_entity,
                                     image_files,
                                     caption=caption
                                 )
@@ -550,13 +571,14 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
                                 await _add_log_by_id(model.id, "[Tạm dừng]", f"[Upload Album] Telegram yêu cầu chờ {fe.seconds}s, tự động nối lại...")
                                 await asyncio.sleep(wait_sec)
                         
-                        reply_to_msg_id = album_msgs[0].id if isinstance(album_msgs, list) else album_msgs.id
+                        reply_to_msg_id = album_msgs[0].id if (album_msgs and isinstance(album_msgs, list)) else (album_msgs.id if album_msgs else None)
                         from telethon.tl.types import DocumentAttributeFilename
 
+                        doc_msg = None
                         for uattempt in range(1, upload_retries + 1):
                             try:
                                 doc_msg = await telegram_client.send_file(
-                                    target_chat_id,
+                                    target_entity,
                                     tmp_file,
                                     reply_to=reply_to_msg_id,
                                     attributes=[DocumentAttributeFilename(file_name=model.original_filename)]
@@ -574,12 +596,13 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
                         await _add_log(session, model, "Backup (98%)", f"[98%] Đang upload file 3D kèm mô tả sang nhóm đích ({target_chat_id})...")
 
                         upload_retries = 3
+                        tg_msg = None
                         for uattempt in range(1, upload_retries + 1):
                             try:
                                 tg_msg = await telegram_client.send_file(
-                                    target_chat_id,
+                                    target_entity,
                                     tmp_file,
-                                    thumb=thumb_path if os.path.exists(thumb_path) else None,
+                                    thumb=thumb_path if (thumb_path and os.path.exists(thumb_path)) else None,
                                     caption=caption
                                 )
                                 break
@@ -596,19 +619,14 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
                     await _add_log(session, model, "Backup (99%)", "[99%] Upload thành công lên nhóm đích.")
                 except Exception as upload_exc:
                     err_msg = f"Upload lên nhóm đích ({target_chat_str}) thất bại: {upload_exc}"
-                    logger.error(f"[{model.id}] {err_msg}")
+                    logger.error(f"[{model.id}] {err_msg}", exc_info=True)
                     model.processing_error = err_msg
                     await _add_log(session, model, "Backup (Lỗi Upload)", f"[Lỗi Upload] {err_msg}")
                     await session.commit()
             else:
-                if not target_chat_str:
-                    msg_warn = "[Cảnh báo] TELEGRAM_TARGET_CHAT_ID chưa được cài đặt trong System Settings hoặc .env. Bỏ qua upload lưu trữ."
-                    logger.warning(f"[{model.id}] {msg_warn}")
-                    await _add_log(session, model, "Backup (Chưa cài ID)", msg_warn)
-                elif not tmp_file or not os.path.exists(tmp_file):
-                    msg_warn = f"[Cảnh báo] Không tìm thấy file tạm {tmp_file} để upload sang nhóm đích."
-                    logger.warning(f"[{model.id}] {msg_warn}")
-                    await _add_log(session, model, "Backup (Thiếu file tạm)", msg_warn)
+                msg_warn = "[Cảnh báo] TELEGRAM_TARGET_CHAT_ID chưa được cài đặt trong System Settings hoặc .env. Bỏ qua upload lưu trữ."
+                logger.warning(f"[{model.id}] {msg_warn}")
+                await _add_log(session, model, "Backup (Chưa cài ID)", msg_warn)
 
             total_elapsed = time.time() - pipeline_start
             await _add_log(session, model, "Hoàn tất (100%)", f"[100%] Hoàn tất 100% xử lý model '{model.original_filename}' trong {total_elapsed:.1f} giây!")
