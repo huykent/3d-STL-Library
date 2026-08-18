@@ -348,12 +348,17 @@ async def download_model(
 
     filename = model.original_filename or "model.stl"
 
+    headers = {
+        "Content-Disposition": f'attachment; filename="{filename}"',
+        "Accept-Ranges": "bytes"
+    }
+    if model.file_size_bytes and model.file_size_bytes > 0:
+        headers["Content-Length"] = str(model.file_size_bytes)
+
     return StreamingResponse(
         stream,
         media_type="application/octet-stream",
-        headers={
-            "Content-Disposition": f'attachment; filename="{filename}"'
-        },
+        headers=headers,
     )
 
 

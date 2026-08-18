@@ -8,18 +8,14 @@ from __future__ import annotations
 
 from typing import AsyncGenerator
 
-# Default chunk size: 512 KB — balances memory use and network efficiency
-_CHUNK_SIZE = 512 * 1024  # 512 KB
-
-
 import logging
 from typing import AsyncGenerator
 from telethon import TelegramClient
 
 logger = logging.getLogger(__name__)
 
-# Default chunk size: 512 KB — balances memory use and network efficiency
-_CHUNK_SIZE = 512 * 1024  # 512 KB
+# Default chunk size: 2 MB — optimized for high-throughput HTTP streaming
+_CHUNK_SIZE = 2 * 1024 * 1024  # 2 MB
 
 
 async def stream_file_from_telegram(
