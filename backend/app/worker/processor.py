@@ -84,35 +84,44 @@ async def _assign_tags_to_model(session: AsyncSession, model: Model3D, keyword_s
     """Parse keyword string, upsert Tag records (PostgreSQL ON CONFLICT), and assign to model.tags."""
     import re as _re
     from app.models.tag import Tag
-    from sqlalchemy import select as _select, text as _text
+    from sqlalchemy import select as _select
 
     if not keyword_str:
         return
 
-    raw_names = [k.strip().lower() for k in keyword_str.replace(',', ' ').split() if k.strip()]
+    # Clean tag names: remove emojis and special symbols so name and slug are clean
+    raw_list = [k.strip().lower() for k in str(keyword_str).replace(',', ' ').split() if k.strip()]
+    cleaned_names = []
+    for k in raw_list:
+        clean_w = _re.sub(r'[^a-zA-Z0-9_\u00C0-\u024F\u1E00-\u1EFF-]', '', k).strip()
+        if clean_w and len(clean_w) >= 2:
+            cleaned_names.append(clean_w)
+
     # De-duplicate while preserving order
     seen: set = set()
-    tag_names = [n for n in raw_names if not (n in seen or seen.add(n))]  # type: ignore[func-returns-value]
+    tag_names = [n for n in cleaned_names if not (n in seen or seen.add(n))]  # type: ignore[func-returns-value]
 
     if not tag_names:
         return
 
-    # ── Upsert tags dùng PostgreSQL ON CONFLICT DO NOTHING ───────────────────
-    # Tranh race condition khi nhiều workers cùng tạo tag trùng tên
-    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    # Safe upsert tag using begin_nested() savepoint to prevent transaction rollback
     for name in tag_names:
         slug = _re.sub(r'[^a-z0-9]+', '-', name).strip('-')
-        stmt = pg_insert(Tag).values(name=name, slug=slug).on_conflict_do_nothing(index_elements=['name'])
-        await session.execute(stmt)
+        if not slug:
+            slug = name.lower()
+        try:
+            async with session.begin_nested():
+                from sqlalchemy.dialects.postgresql import insert as pg_insert
+                stmt = pg_insert(Tag).values(name=name, slug=slug).on_conflict_do_nothing(index_elements=['name'])
+                await session.execute(stmt)
+        except Exception as e:
+            logger.warning(f"Could not upsert tag '{name}' (slug '{slug}'): {e}")
 
-    # Flush để đảm bảo các tag mới được ghi xuống DB trước khi query lại
-    await session.flush()
-
-    # Re-query tất cả tags (bao gồm cả tag vừa INSERT và tag đã tồn tại)
+    # Re-query all valid tags
     existing_q = await session.execute(_select(Tag).where(Tag.name.in_(tag_names)))
     assigned = list(existing_q.scalars().all())
 
-    # Async refresh tags relationship trước khi gán để tránh lỗi MissingGreenlet
+    # Async refresh tags relationship before assigning to avoid MissingGreenlet
     try:
         await session.refresh(model, ["tags"])
     except Exception:
