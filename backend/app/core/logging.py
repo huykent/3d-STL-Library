@@ -15,6 +15,10 @@ class RedisPubSubHandler(logging.Handler):
 
     def emit(self, record):
         try:
+            # Lọc bỏ log SQL query thô của SQLAlchemy để luồng WebSocket sạch sẽ, tập trung vào event thật
+            if record.name == "sqlalchemy.engine.Engine":
+                return
+
             msg = self.format(record)
             log_data = {
                 "timestamp": datetime.utcnow().isoformat() + "Z",
