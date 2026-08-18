@@ -137,12 +137,12 @@ async def stream_file_from_telegram(
         except Exception as exc:
             logger.warning(f"fast_stream_document failed: {exc}. Fallback to iter_download.")
 
-    # 2. Fallback: iter_download
+    # 2. Fallback: iter_download với request_size 2MB tối ưu
     if file_id_fallback:
-        async for chunk in client.iter_download(file_id_fallback, chunk_size=chunk_size):
+        async for chunk in client.iter_download(file_id_fallback, chunk_size=chunk_size, request_size=chunk_size):
             yield chunk
     elif doc:
-        async for chunk in client.iter_download(doc, chunk_size=chunk_size):
+        async for chunk in client.iter_download(doc, chunk_size=chunk_size, request_size=chunk_size):
             yield chunk
     else:
         raise ValueError("Cannot locate Telegram document to stream")
