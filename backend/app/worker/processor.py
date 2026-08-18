@@ -81,10 +81,10 @@ async def _add_log_by_id(model_id, step: str, message: str) -> None:
 
 
 async def _assign_tags_to_model(session: AsyncSession, model: Model3D, keyword_str: str) -> None:
-    """Parse keyword string, upsert Tag records, and assign them to model.tags."""
+    """Parse keyword string, upsert Tag records (PostgreSQL ON CONFLICT), and assign to model.tags."""
     import re as _re
     from app.models.tag import Tag
-    from sqlalchemy import select as _select
+    from sqlalchemy import select as _select, text as _text
 
     if not keyword_str:
         return
@@ -97,19 +97,20 @@ async def _assign_tags_to_model(session: AsyncSession, model: Model3D, keyword_s
     if not tag_names:
         return
 
-    # Fetch existing tags in one query
-    existing_q = await session.execute(_select(Tag).where(Tag.name.in_(tag_names)))
-    existing_map = {t.name: t for t in existing_q.scalars().all()}
-
-    assigned: list = []
+    # ── Upsert tags dùng PostgreSQL ON CONFLICT DO NOTHING ───────────────────
+    # Tranh race condition khi nhiều workers cùng tạo tag trùng tên
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
     for name in tag_names:
-        if name in existing_map:
-            tag = existing_map[name]
-        else:
-            slug = _re.sub(r'[^a-z0-9]+', '-', name).strip('-')
-            tag = Tag(name=name, slug=slug)
-            session.add(tag)
-        assigned.append(tag)
+        slug = _re.sub(r'[^a-z0-9]+', '-', name).strip('-')
+        stmt = pg_insert(Tag).values(name=name, slug=slug).on_conflict_do_nothing(index_elements=['name'])
+        await session.execute(stmt)
+
+    # Flush để đảm bảo các tag mới được ghi xuống DB trước khi query lại
+    await session.flush()
+
+    # Re-query tất cả tags (bao gồm cả tag vừa INSERT và tag đã tồn tại)
+    existing_q = await session.execute(_select(Tag).where(Tag.name.in_(tag_names)))
+    assigned = list(existing_q.scalars().all())
 
     model.tags = assigned
 
@@ -466,6 +467,10 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
             model.processing_status = ProcessingStatus.completed
             model.processing_error = None
 
+            # ── COMMIT completed status TRƯỚC khi upload ──────────────────
+            # Đảm bảo model luôn được lưu là completed dù upload có fail hay không
+            await session.commit()
+            await _add_log(session, model, "Hoàn tất phân tích (95%)", "[95%] Đã lưu kết quả vào CSDL.")
 
             # ── Step 6: Upload to Target Group (98%) ───────────────────────
             from app.services.settings import SettingsService
