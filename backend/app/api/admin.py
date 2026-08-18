@@ -493,3 +493,82 @@ async def reprocess_failed_models_api(
     }
 
 
+@router.post(
+    "/queue/clear",
+    summary="Clear all pending jobs in Redis queue and delete pending model records (admin only)",
+)
+async def clear_queue_api(
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(get_current_active_admin),
+):
+    """Flushes Redis queue jobs and deletes pending models from DB."""
+    from app.worker.queue import get_redis_pool
+    redis = await get_redis_pool()
+
+    try:
+        await redis.flushdb()
+    except Exception as e:
+        logger.warning(f"Could not flush redis db: {e}")
+
+    stmt_pending = select(Model3D).where(Model3D.processing_status == ProcessingStatus.pending)
+    res = await db.execute(stmt_pending)
+    pending_models = res.scalars().all()
+
+    deleted_count = len(pending_models)
+    for m in pending_models:
+        await db.delete(m)
+
+    await db.commit()
+    return {
+        "status": "success",
+        "message": f"Đã xoá sạch hàng chờ Redis và xoá {deleted_count} model đang chờ.",
+        "deleted_count": deleted_count
+    }
+
+
+@router.post(
+    "/queue/full-recrawl",
+    summary="Clear queue and trigger full history recrawl for all source groups (admin only)",
+)
+async def full_recrawl_api(
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(get_current_active_admin),
+):
+    """Clears queue, resets group crawl checkpoints, and enqueues history crawl job."""
+    from app.worker.queue import get_redis_pool
+    from app.models.source_group import SourceGroup
+    from app.services.source_group_sync import sync_source_groups_from_settings
+
+    # 1. Sync source groups from settings
+    await sync_source_groups_from_settings(session=db)
+
+    # 2. Reset crawl checkpoint for all source groups
+    stmt_groups = select(SourceGroup).where(SourceGroup.is_active == True)
+    groups = (await db.execute(stmt_groups)).scalars().all()
+    for g in groups:
+        g.oldest_message_id = 0
+
+    # 3. Delete pending models
+    stmt_pending = select(Model3D).where(Model3D.processing_status == ProcessingStatus.pending)
+    pending_models = (await db.execute(stmt_pending)).scalars().all()
+    for m in pending_models:
+        await db.delete(m)
+
+    await db.commit()
+
+    # 4. Flush Redis & trigger history crawl job
+    redis = await get_redis_pool()
+    try:
+        await redis.flushdb()
+    except Exception as e:
+        logger.warning(f"Flush db error: {e}")
+
+    await redis.enqueue_job("cron_crawl_history")
+
+    return {
+        "status": "success",
+        "message": f"Đã xoá hàng chờ và kích hoạt cào lại lịch sử cho {len(groups)} nhóm nguồn. Các file chưa có trên nhóm đích sẽ được tự động cào về!",
+        "groups_count": len(groups)
+    }
+
+

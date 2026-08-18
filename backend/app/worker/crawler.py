@@ -90,14 +90,15 @@ async def cron_crawl_history(ctx: dict) -> None:
                         existing_res = await session.execute(stmt_dup)
                         existing_m = existing_res.scalars().first()
                         if existing_m:
-                            if existing_m.processing_status == ProcessingStatus.completed:
-                                logger.info(f"[CÀO LỊCH SỬ] ⏭️ File/tin nhắn #{message.id} ('{file_name}') đã hoàn tất. Bỏ qua.")
+                            # Chỉ bỏ qua nếu ĐÃ HOÀN TẤT VÀ ĐÃ UPLOAD LÊN NHÓM ĐÍCH (telegram_file_id is not None)
+                            if existing_m.processing_status == ProcessingStatus.completed and existing_m.telegram_file_id:
+                                logger.info(f"[CÀO LỊCH SỬ] ⏭️ File '{file_name}' đã có trong nhóm đích. Bỏ qua.")
                                 continue
-                            elif (existing_m.processing_retries or 0) >= 3:
-                                logger.info(f"[CÀO LỊCH SỬ] ⏭️ File/tin nhắn #{message.id} ('{file_name}') đã thử lại 3 lần thất bại. Bỏ qua.")
+                            elif (existing_m.processing_retries or 0) >= 5:
+                                logger.info(f"[CÀO LỊCH SỬ] ⏭️ File '{file_name}' đã thử lại quá 5 lần thất bại. Bỏ qua.")
                                 continue
                             else:
-                                logger.info(f"[CÀO LỊCH SỬ] 🔄 File #{message.id} ('{file_name}') từng thất bại (retries: {existing_m.processing_retries}). Thử lại...")
+                                logger.info(f"[CÀO LỊCH SỬ] 🔄 File '{file_name}' chưa có trên nhóm đích. Đẩy vào hàng đợi cào & upload...")
 
 
                         # Enqueue job

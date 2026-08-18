@@ -149,6 +149,23 @@ export default function ActiveQueuePage() {
     }
   };
 
+  const handleFullRecrawl = async () => {
+    if (!confirm("Bạn có chắc chắn muốn xoá sạch hàng chờ hiện tại và cào lại lịch sử toàn bộ các nhóm nguồn? (Các file đã có trên nhóm đích sẽ được tự động lọc bỏ)")) {
+      return;
+    }
+    setReprocessing(true);
+    try {
+      const res = await api.post<{ status: string; message: string; groups_count: number }>("/admin/queue/full-recrawl");
+      setToastMsg(res.data.message);
+      fetchStatus();
+    } catch (err: any) {
+      setError(err.response?.data?.detail || "Failed to trigger full recrawl");
+    } finally {
+      setReprocessing(false);
+      setTimeout(() => setToastMsg(""), 6000);
+    }
+  };
+
   useEffect(() => {
     fetchStatus();
     const interval = setInterval(fetchStatus, 2000);
@@ -185,14 +202,22 @@ export default function ActiveQueuePage() {
             Giám sát thời gian thực tiến trình LLM AI Tagging, Cào dữ liệu Telegram, Xử lý 3D và Đẩy lên Nhóm Đích.
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
+            onClick={handleFullRecrawl}
+            disabled={reprocessing}
+            className="bg-gradient-to-r from-amber-600 to-rose-600 hover:from-amber-500 hover:to-rose-500 text-white font-medium flex items-center gap-2 px-4 py-2 rounded-xl shadow-lg shadow-rose-500/20 text-xs md:text-sm"
+          >
+            <FiRefreshCw className={`w-4 h-4 ${reprocessing ? "animate-spin" : ""}`} />
+            {reprocessing ? "Đang xử lý..." : "Xoá Hàng Chờ & Cào Lại"}
+          </Button>
           <Button
             onClick={handleReprocessFailed}
             disabled={reprocessing}
             className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-medium flex items-center gap-2 px-4 py-2 rounded-xl shadow-lg shadow-blue-500/20 text-xs md:text-sm"
           >
             <FiRefreshCw className={`w-4 h-4 ${reprocessing ? "animate-spin" : ""}`} />
-            {reprocessing ? "Đang xử lý..." : "Thử lại file lỗi & chưa upload"}
+            Thử lại file lỗi
           </Button>
           <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30 px-3 py-2 flex items-center gap-2 text-xs">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
