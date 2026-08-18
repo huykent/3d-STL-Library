@@ -131,6 +131,11 @@ async def update_settings_api(
     _admin: User = Depends(get_current_active_admin),
 ):
     await SettingsService.update_settings(new_settings)
+    
+    # Auto-sync TELEGRAM_CHAT_IDS to source_groups table
+    from app.services.source_group_sync import sync_source_groups_from_settings
+    await sync_source_groups_from_settings()
+
     return {"status": "success", "message": "Settings updated successfully"}
 
 
@@ -249,6 +254,10 @@ async def get_queue_status_api(
     from app.config import get_settings
     from datetime import datetime
     from sqlalchemy import func
+
+    # Auto-sync TELEGRAM_CHAT_IDS to source_groups DB table
+    from app.services.source_group_sync import sync_source_groups_from_settings
+    await sync_source_groups_from_settings(session=db)
 
     # Target chat ID setting
     target_chat_str = await SettingsService.get_setting("TELEGRAM_TARGET_CHAT_ID")

@@ -27,6 +27,10 @@ async def cron_crawl_history(ctx: dict) -> None:
     redis = ctx.get("redis")
     
     async with AsyncSessionLocal() as session:
+        # Auto-sync source groups from TELEGRAM_CHAT_IDS setting
+        from app.services.source_group_sync import sync_source_groups_from_settings
+        await sync_source_groups_from_settings(session=session, telegram_client=telegram_client)
+
         # Fetch active source groups
         stmt = select(SourceGroup).where(SourceGroup.is_active == True)
         result = await session.execute(stmt)
