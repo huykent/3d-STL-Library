@@ -36,6 +36,16 @@ async def stream_file_from_telegram(
     if not client.is_connected():
         await client.connect()
 
+    # 1. Ưu tiên stream trực tiếp từ Nhóm Đích nếu đã upload (file_id_fallback)
+    if file_id_fallback:
+        try:
+            async for chunk in client.iter_download(file_id_fallback, chunk_size=chunk_size):
+                yield chunk
+            return
+        except Exception as e:
+            logger.warning(f"Không thể stream từ target file_id {file_id_fallback}: {e}. Chuyển sang dùng nhóm gốc.")
+
+    # 2. Dự phòng: Stream trực tiếp từ tin nhắn Nhóm Nguồn Telegram gốc
     doc = None
     if chat_id and message_id:
         try:
@@ -45,10 +55,9 @@ async def stream_file_from_telegram(
         except Exception as e:
             logger.warning(f"Could not fetch message {message_id} in {chat_id}: {e}")
 
-    target = doc or file_id_fallback
-    if not target:
+    if not doc:
         raise ValueError("Cannot locate Telegram document to stream")
 
-    async for chunk in client.iter_download(target, chunk_size=chunk_size):
+    async for chunk in client.iter_download(doc, chunk_size=chunk_size):
         yield chunk
 
