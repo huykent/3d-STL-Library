@@ -36,6 +36,8 @@ class SettingsService:
             "TELEGRAM_API_HASH": env_settings.TELEGRAM_API_HASH or "",
             "TELEGRAM_PHONE": env_settings.TELEGRAM_PHONE or "",
             "OLLAMA_BASE_URL": env_settings.OLLAMA_BASE_URL or "",
+            "TELEGRAM_TARGET_CHAT_ID": env_settings.TELEGRAM_TARGET_CHAT_ID or "",
+            "TELEGRAM_CHAT_IDS": env_settings.TELEGRAM_CHAT_IDS or "",
         }
 
         if cached:

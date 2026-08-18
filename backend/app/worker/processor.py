@@ -254,9 +254,18 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
             session.add(model)
             await session.flush()
         else:
-            if model.processing_status == ProcessingStatus.completed:
-                logger.info(f"Model {model.id} ({file_name}) already completed. Skipping re-processing.")
+            # Nếu model đã completed VÀ đã được upload lên nhóm đích (file_id khác file_id gốc) -> Bỏ qua
+            # Nếu model đã completed nhưng CHƯA upload lên nhóm đích -> Cho phép chạy tiếp để upload
+            from app.services.settings import SettingsService
+            target_chat_str = await SettingsService.get_setting("TELEGRAM_TARGET_CHAT_ID")
+            if not target_chat_str:
+                target_chat_str = settings.TELEGRAM_TARGET_CHAT_ID
+
+            already_uploaded = (model.telegram_file_id and model.telegram_file_id != file_id_str)
+            if model.processing_status == ProcessingStatus.completed and (already_uploaded or not target_chat_str):
+                logger.info(f"Model {model.id} ({file_name}) already completed and uploaded. Skipping re-processing.")
                 return
+            
             model.processing_status = ProcessingStatus.processing
             model.processing_retries = (model.processing_retries or 0) + 1
             

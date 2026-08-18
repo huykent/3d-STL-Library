@@ -319,25 +319,31 @@ async def get_queue_status_api(
 
 @router.post(
     "/queue/reprocess-failed",
-    summary="Re-enqueue all failed models for reprocessing (admin only)",
+    summary="Re-enqueue all failed or un-uploaded models for reprocessing (admin only)",
 )
 async def reprocess_failed_models_api(
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(get_current_active_admin),
 ):
-    """Resets failed models to pending status and pushes them to Redis queue."""
+    """Resets failed models & completed-but-not-uploaded models to pending status and pushes them to Redis queue."""
     from app.worker.queue import get_redis_pool
-    stmt_failed = select(Model3D).where(Model3D.processing_status == ProcessingStatus.failed)
-    res = await db.execute(stmt_failed)
-    failed_models = res.scalars().all()
+    from sqlalchemy import or_
+    stmt_targets = select(Model3D).where(
+        or_(
+            Model3D.processing_status == ProcessingStatus.failed,
+            Model3D.telegram_file_id.is_(None)
+        )
+    )
+    res = await db.execute(stmt_targets)
+    target_models = res.scalars().all()
 
-    if not failed_models:
-        return {"status": "success", "message": "No failed models to reprocess", "requeued_count": 0}
+    if not target_models:
+        return {"status": "success", "message": "No failed or un-uploaded models to reprocess", "requeued_count": 0}
 
     redis = await get_redis_pool()
     requeued_count = 0
 
-    for model in failed_models:
+    for model in target_models:
         model.processing_status = ProcessingStatus.pending
         model.processing_error = None
         requeued_count += 1
@@ -350,7 +356,7 @@ async def reprocess_failed_models_api(
     await db.commit()
     return {
         "status": "success",
-        "message": f"Successfully re-queued {requeued_count} failed models for reprocessing",
+        "message": f"Successfully re-queued {requeued_count} models for reprocessing & target group upload",
         "requeued_count": requeued_count
     }
 
