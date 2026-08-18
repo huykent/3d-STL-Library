@@ -116,7 +116,7 @@ class Model3D(Base):
         "SourceGroup", back_populates="models", lazy="select"
     )
     tags: Mapped[List["Tag"]] = relationship(
-        "Tag", secondary=model_tags, back_populates="models", lazy="select"
+        "Tag", secondary=model_tags, back_populates="models", lazy="selectin"
     )
     jobs: Mapped[List["ProcessingJob"]] = relationship(
         "ProcessingJob", back_populates="model", cascade="all, delete-orphan", lazy="select"

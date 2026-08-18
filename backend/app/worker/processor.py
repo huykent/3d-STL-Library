@@ -112,6 +112,11 @@ async def _assign_tags_to_model(session: AsyncSession, model: Model3D, keyword_s
     existing_q = await session.execute(_select(Tag).where(Tag.name.in_(tag_names)))
     assigned = list(existing_q.scalars().all())
 
+    # Async refresh tags relationship trước khi gán để tránh lỗi MissingGreenlet
+    try:
+        await session.refresh(model, ["tags"])
+    except Exception:
+        pass
     model.tags = assigned
 
 
