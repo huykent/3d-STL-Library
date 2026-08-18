@@ -330,11 +330,13 @@ async def get_queue_status_api(
     source_groups = (await db.execute(stmt_groups)).scalars().all()
     groups_list = []
     for g in source_groups:
+        stmt_mc = select(func.count(Model3D.id)).where(Model3D.source_group_id == g.id)
+        real_mcount = (await db.execute(stmt_mc)).scalar() or 0
         groups_list.append({
             "id": g.id,
             "chat_id": g.chat_id,
             "name": g.name,
-            "model_count": g.model_count,
+            "model_count": real_mcount,
             "is_active": g.is_active,
             "last_message_id": g.last_message_id
         })

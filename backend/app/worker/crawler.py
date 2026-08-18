@@ -107,16 +107,14 @@ async def cron_crawl_history(ctx: dict) -> None:
                             message_id=message.id,
                             chat_id=chat_id
                         )
-                        logger.info(f"[CÀO LỊCH SỬ] 🚀 Đã đẩy file '{file_name}' (#{message.id}) vào hàng đợi xử lý! (Tiến độ cào nhóm: mốc ID #{new_oldest_id})")
+                        logger.info(f"[CÀO LỊCH SỬ] 🚀 Đã đẩy file '{file_name}' (#{message.id}) vào hàng đợi xử lý! (Mốc Msg ID #{new_oldest_id})")
                         found_valid_file = True
-                        # Drip-feed: chờ 2s giữa các lần enqueue để không gửi ồ ạt vào Redis
-                        await asyncio.sleep(2)
-                        break # Only process 1 file per group per cron run (Drip Feed)
+                        await asyncio.sleep(1)
 
-                
                 # Save progress so next time we go further back
                 if messages:
                     group.oldest_message_id = new_oldest_id
+                    group.last_message_id = new_oldest_id
                     await session.commit()
                 
             except Exception as e:
