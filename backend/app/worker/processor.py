@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 # ── Global download lock: chỉ tải 1 file Telegram tại một thời điểm ──────────
 # Giúp ngăn FloodWait do gửi quá nhiều request song song đến Telegram
-DOWNLOAD_SEMAPHORE = asyncio.Semaphore(1)
+DOWNLOAD_SEMAPHORE = asyncio.Semaphore(3)  # Premium: cho phép 3 file tải song song
 
 from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -314,8 +314,8 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
                     progress_callback=dl_progress_callback,
                     status_callback=_flood_wait_status_callback
                 )
-                # Giãn cách 3s sau tải xong để tránh FloodWait cho file tiếp theo
-                await asyncio.sleep(3)
+                # Giãn cách nhỏ sau tải xong (Premium: giảm xuống 0.5s)
+                await asyncio.sleep(0.5)
 
             file_size_mb = (os.path.getsize(tmp_file) / (1024 * 1024)) if os.path.exists(tmp_file) else 0
             await _add_log(session, model, "Tải file (30%)", f"[30%] Tải thành công file '{model.original_filename}' ({file_size_mb:.1f} MB) trong {time.time()-dl_start:.1f}s", path=tmp_file)
