@@ -43,6 +43,8 @@ async def download_telegram_document(client, message, save_dir: str, progress_ca
     Download a document from a Telegram message to the given directory.
     ✅ Resumable: nếu file đang tải bị gián đoạn (worker restart, crash...) thì
        tự động tải tiếp từ byte đã có thay vì tải lại từ đầu.
+    ✅ Verify size: sau khi tải xong, kiểm tra kích thước thực tế vs kỳ vọng.
+       Nếu lệch (bị cắt ngang) → xóa và raise để worker retry.
     ✅ Handles Telegram FloodWait/rate-limit với retry + tự động chờ.
     Returns the absolute path to the downloaded file.
     """
@@ -105,6 +107,25 @@ async def download_telegram_document(client, message, save_dir: str, progress_ca
                     if progress_callback:
                         progress_callback(downloaded, total_size)
 
+            # ── Xác minh kích thước sau khi tải xong ─────────────────────
+            # Tránh file bị cắt ngang (như các file 13,107,200 bytes = đúng 25 chunk)
+            if total_size > 0:
+                actual_size = os.path.getsize(save_path)
+                if actual_size != total_size:
+                    logger.warning(
+                        f"[Download] File '{file_name}' bị cắt ngắn: "
+                        f"kỳ vọng {total_size:,} bytes, thực tế {actual_size:,} bytes. "
+                        f"Xóa và thử lại (lần {attempt}/{max_retries})..."
+                    )
+                    try:
+                        os.unlink(save_path)
+                    except OSError:
+                        pass
+                    existing_size = 0  # Force fresh download next attempt
+                    raise RuntimeError(
+                        f"Download incomplete: expected {total_size:,}, got {actual_size:,} bytes"
+                    )
+
             logger.info(f"[Download] Hoàn tất: '{file_name}' ({downloaded:,} bytes)")
             return save_path
 
@@ -127,9 +148,13 @@ async def download_telegram_document(client, message, save_dir: str, progress_ca
                 with open(save_path, 'r+b') as _f:
                     _f.truncate(existing_size)
 
+        except RuntimeError:
+            # RuntimeError từ size mismatch — tiếp tục vòng lặp retry
+            if attempt >= max_retries:
+                raise RuntimeError(f"Tải file '{file_name}' thất bại sau {max_retries} lần thử (size mismatch liên tục)")
+            await asyncio.sleep(2)
+
         except Exception:
             raise
 
     raise RuntimeError(f"Tải file '{file_name}' thất bại sau {max_retries} lần thử (FloodWait liên tục)")
-
-

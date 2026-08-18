@@ -598,20 +598,14 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
                 logger.error(f"[{model.id}] DB commit after failure also failed: {db_exc}")
 
         finally:
-            # ── ALWAYS delete temp files and extraction dirs ──────────────
+            # ── ALWAYS delete entire tmp_dir (xoá cả file 0-byte orphan) ──
             import shutil
-            if tmp_file and os.path.exists(tmp_file):
+            if 'tmp_dir' in locals() and tmp_dir and os.path.exists(tmp_dir):
                 try:
-                    os.unlink(tmp_file)
-                    await _add_log(session, model, "Dọn dẹp", f"Đã xoá file tạm thời", path=tmp_file)
-                except OSError as e:
-                    logger.warning(f"[{model.id}] Could not delete temp file {tmp_file}: {e}")
-            if 'extract_dir' in locals() and os.path.exists(extract_dir):
-                try:
-                    shutil.rmtree(extract_dir)
-                    await _add_log(session, model, "Dọn dẹp", f"Đã dọn dẹp thư mục xả nén", path=extract_dir)
-                except OSError as e:
-                    logger.warning(f"[{model.id}] Could not delete extract dir {extract_dir}: {e}")
+                    shutil.rmtree(tmp_dir, ignore_errors=True)
+                    logger.info(f"[{model.id}] Đã dọn sạch thư mục tạm: {tmp_dir}")
+                except Exception as e:
+                    logger.warning(f"[{model.id}] Không xóa được tmp_dir {tmp_dir}: {e}")
 
             # Run a sweep on TEMP_DIR to purge any orphaned leftover temp files
             _cleanup_orphaned_temp_files(settings.TEMP_DIR)
