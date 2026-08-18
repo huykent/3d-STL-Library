@@ -117,7 +117,13 @@ async def stream_file_from_telegram(
     # 1. Tìm document từ chat_id + message_id hoặc target file_id
     if chat_id and message_id:
         try:
-            msg = await client.get_messages(chat_id, ids=message_id)
+            try:
+                entity = await client.get_entity(chat_id)
+            except Exception:
+                await client.get_dialogs(limit=100)
+                entity = await client.get_entity(chat_id)
+
+            msg = await client.get_messages(entity, ids=message_id)
             if msg and msg.document:
                 doc = msg.document
         except Exception as e:
