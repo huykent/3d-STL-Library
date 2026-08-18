@@ -65,7 +65,7 @@ async def download_telegram_document(client, message, save_dir: str, progress_ca
     total_size: int = message.document.size or 0
 
     # ── Kiểm tra file tạm đang tải dở ───────────────────────────────────────
-    CHUNK_SIZE = 1024 * 1024  # 1 MB — Premium account cho phép chunk lớn hơn
+    CHUNK_SIZE = 4 * 1024 * 1024  # 4 MB — Telegram Premium cho phép chunk lớn hơn, throughput cao hơn
     existing_size = 0
     if os.path.exists(save_path):
         raw_size = os.path.getsize(save_path)
