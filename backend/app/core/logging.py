@@ -49,9 +49,12 @@ class RedisPubSubHandler(logging.Handler):
 
 def setup_redis_logging(process_name: str):
     """
-    Attach the Redis handler to the root logger.
+    Attach the Redis handler to the root logger and set INFO levels for app packages.
     """
     root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+
+    logging.getLogger("app").setLevel(logging.INFO)
     
     # Check if we already added it to prevent duplicates
     for handler in root_logger.handlers:
