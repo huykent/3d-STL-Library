@@ -75,109 +75,27 @@ async def download_telegram_document(client, message, save_dir: str, progress_ca
         # Căn chỉnh về biên chunk để tránh lỗi dữ liệu
         existing_size = (raw_size // CHUNK_SIZE) * CHUNK_SIZE
         if existing_size > 0:
-            # Truncate về biên chunk an toàn
             with open(save_path, 'r+b') as _f:
                 _f.truncate(existing_size)
-            logger.info(
-                f"[Resume] File '{file_name}' đang tải dở ({raw_size:,} / {total_size:,} bytes). "
-                f"Tiếp tục từ byte {existing_size:,}..."
-            )
-            if status_callback:
-                await status_callback(
-                    f"[Tiếp tục] Phát hiện file tải dở ({existing_size/(1024*1024):.1f} MB / "
-                    f"{total_size/(1024*1024):.1f} MB), đang tải tiếp..."
-                )
 
-    # ── Tải bằng Parallel Multi-Worker (Fast Download Safe & Robust) ─────────
+    # ── Tải (hoặc tải tiếp) bằng iter_download chuẩn Telethon ─────────────────
     max_retries = 5
-    PARALLEL_WORKERS = 3  # 3 luồng song song (tối ưu cho Telegram MTProto không bị FloodWait)
-    RPC_CHUNK_SIZE = 512 * 1024  # 512 KB — Hạn mức 1 RPC request Telegram
-
     for attempt in range(1, max_retries + 1):
         try:
-            # Nếu file chưa tồn tại, khởi tạo file với dung lượng total_size
-            if not os.path.exists(save_path):
-                with open(save_path, 'wb') as _f_init:
-                    if total_size > 0:
-                        _f_init.truncate(total_size)
+            file_mode = 'ab' if existing_size > 0 else 'wb'
+            downloaded = existing_size
 
-            # Lấy kích thước thực tế hiện tại của file
-            raw_size = os.path.getsize(save_path) if os.path.exists(save_path) else 0
-            existing_size = (raw_size // RPC_CHUNK_SIZE) * RPC_CHUNK_SIZE
-
-            # Chỉ dùng Fast Multi-Worker ở lần thử đầu (attempt == 1) và file >= 20MB
-            use_fast = (attempt == 1) and (total_size >= 20 * 1024 * 1024)
-
-            if use_fast:
-                logger.info(f"[FastDownload] Tải đa luồng safe ({PARALLEL_WORKERS} workers) cho file '{file_name}' ({total_size/(1024*1024):.1f} MB)...")
-                
-                from telethon import utils
-                from telethon.tl.functions.upload import GetFileRequest
-
-                location = utils.get_input_location(message.document)
-                total_chunks = (total_size + RPC_CHUNK_SIZE - 1) // RPC_CHUNK_SIZE
-                start_chunk = existing_size // RPC_CHUNK_SIZE
-                
-                downloaded_counter = [existing_size]
-                lock = asyncio.Lock()
-
-                queue = asyncio.Queue()
-                for c_idx in range(start_chunk, total_chunks):
-                    offset = c_idx * RPC_CHUNK_SIZE
-                    queue.put_nowait((c_idx, offset))
-
-                async def _worker():
-                    while not queue.empty():
-                        try:
-                            c_idx, offset = queue.get_nowait()
-                        except asyncio.QueueEmpty:
-                            break
-
-                        try:
-                            res = await client(GetFileRequest(
-                                location=location,
-                                offset=offset,
-                                limit=RPC_CHUNK_SIZE
-                            ))
-                            if res and res.bytes:
-                                chunk_bytes = res.bytes
-                                async with lock:
-                                    with open(save_path, 'r+b') as f_out:
-                                        f_out.seek(offset)
-                                        f_out.write(chunk_bytes)
-                                    downloaded_counter[0] += len(chunk_bytes)
-                                    if progress_callback:
-                                        progress_callback(downloaded_counter[0], total_size)
-                            # Giãn cách nhỏ giữa các RPC request để an toàn với Telegram rate-limit
-                            await asyncio.sleep(0.02)
-                        except Exception as worker_err:
-                            await queue.put((c_idx, offset))
-                            raise worker_err
-                        finally:
-                            queue.task_done()
-
-                workers = [asyncio.create_task(_worker()) for _ in range(PARALLEL_WORKERS)]
-                await asyncio.gather(*workers)
-
-            else:
-                # Fallback hoặc attempt >= 2: Tải bằng iter_download chuẩn (Stream 100% an toàn)
-                logger.info(f"[StandardDownload] Tải chế độ tuần tự an toàn cho '{file_name}' (lần thử {attempt}/{max_retries})...")
-                file_mode = 'r+b' if os.path.exists(save_path) and existing_size > 0 else 'wb'
-                downloaded = existing_size
-
-                with open(save_path, file_mode) as f:
-                    if existing_size > 0:
-                        f.seek(existing_size)
-                    async for chunk in client.iter_download(
-                        message.document,
-                        offset=existing_size,
-                        chunk_size=CHUNK_SIZE,
-                        request_size=CHUNK_SIZE,
-                    ):
-                        f.write(chunk)
-                        downloaded += len(chunk)
-                        if progress_callback:
-                            progress_callback(downloaded, total_size)
+            with open(save_path, file_mode) as f:
+                async for chunk in client.iter_download(
+                    message.document,
+                    offset=existing_size,
+                    chunk_size=CHUNK_SIZE,
+                    request_size=CHUNK_SIZE,
+                ):
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    if progress_callback:
+                        progress_callback(downloaded, total_size)
 
             # ── Xác minh kích thước sau khi tải xong ─────────────────────
             if total_size > 0:
@@ -197,7 +115,7 @@ async def download_telegram_document(client, message, save_dir: str, progress_ca
                         f"Download incomplete: expected {total_size:,}, got {actual_size:,} bytes"
                     )
 
-            logger.info(f"[Download] Hoàn tất: '{file_name}' ({os.path.getsize(save_path):,} bytes)")
+            logger.info(f"[Download] Hoàn tất: '{file_name}' ({downloaded:,} bytes)")
             return save_path
 
         except FloodWaitError as e:
