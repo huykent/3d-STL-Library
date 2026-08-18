@@ -154,7 +154,28 @@ async def download_telegram_document(client, message, save_dir: str, progress_ca
                 raise RuntimeError(f"Tải file '{file_name}' thất bại sau {max_retries} lần thử (size mismatch liên tục)")
             await asyncio.sleep(2)
 
-        except Exception:
-            raise
+        except Exception as e:
+            # Xử lý FLOOD_PREMIUM_WAIT (non-premium rate limit — khác với FloodWaitError thông thường)
+            err_str = str(e)
+            if 'FLOOD_PREMIUM_WAIT' in err_str:
+                import re as _re
+                m = _re.search(r'FLOOD_PREMIUM_WAIT_(\d+)', err_str)
+                wait_sec = int(m.group(1)) + 5 if m else 60
+                logger.warning(
+                    f"[FLOOD_PREMIUM_WAIT] Telegram giới hạn tốc độ non-premium: chờ {wait_sec}s "
+                    f"(lần {attempt}/{max_retries})..."
+                )
+                if status_callback:
+                    await status_callback(
+                        f"[Tạm dừng] Telegram yêu cầu Premium, chờ {wait_sec}s rồi thử lại..."
+                    )
+                await asyncio.sleep(wait_sec)
+                if os.path.exists(save_path):
+                    raw_size = os.path.getsize(save_path)
+                    existing_size = (raw_size // CHUNK_SIZE) * CHUNK_SIZE
+                    with open(save_path, 'r+b') as _f:
+                        _f.truncate(existing_size)
+            else:
+                raise
 
     raise RuntimeError(f"Tải file '{file_name}' thất bại sau {max_retries} lần thử (FloodWait liên tục)")

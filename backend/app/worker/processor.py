@@ -199,13 +199,18 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
     settings = get_settings()
     telegram_client = ctx.get("telegram_client")
     tmp_file: str | None = None
+    tmp_dir: str | None = None
 
     async with AsyncSessionLocal() as session:
         if not telegram_client.is_connected():
             await telegram_client.connect()
 
         # ── Fetch Telegram message first to get filename ─────────────────
-        tg_message = await telegram_client.get_messages(chat_id, ids=message_id)
+        try:
+            tg_message = await telegram_client.get_messages(chat_id, ids=message_id)
+        except ValueError as ve:
+            logger.warning(f"Cannot fetch message {message_id} from {chat_id}: {ve}")
+            return
 
         if not tg_message or not tg_message.document:
             logger.error(f"Cannot find valid telegram message {message_id} in {chat_id}")
@@ -262,10 +267,10 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
             pipeline_start = time.time()
 
             # ── Step 1: Download temp file from Telegram (10% -> 30%) ───────
-            tmp_dir = settings.TEMP_DIR
+            tmp_dir = os.path.join(settings.TEMP_DIR, str(model.id))
             os.makedirs(tmp_dir, exist_ok=True)
             # Run immediate cleanup of any leftover temp files older than 2 minutes
-            _cleanup_orphaned_temp_files(tmp_dir, max_age_seconds=120)
+            _cleanup_orphaned_temp_files(settings.TEMP_DIR, max_age_seconds=120)
 
             await _add_log(session, model, "Tải file (10%)", f"[10%] Bắt đầu tải file '{model.original_filename}' từ Telegram...")
 
