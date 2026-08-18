@@ -242,7 +242,7 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
         if model is None:
             logger.info(f"Creating new Model3D record for message_id={message_id}")
             model = Model3D(
-                telegram_file_id=file_id_str,
+                telegram_file_id=None,  # Null cho tới khi upload thành công sang nhóm đích
                 telegram_message_id=message_id,
                 source_group_id=internal_sg_id,
                 original_filename=file_name,
@@ -254,16 +254,16 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
             session.add(model)
             await session.flush()
         else:
-            # Nếu model đã completed VÀ đã được upload lên nhóm đích (file_id khác file_id gốc) -> Bỏ qua
-            # Nếu model đã completed nhưng CHƯA upload lên nhóm đích -> Cho phép chạy tiếp để upload
+            # Nếu model đã completed VÀ đã được upload lên nhóm đích (telegram_file_id is not None) -> Bỏ qua
+            # Nếu model đã completed nhưng CHƯA upload lên nhóm đích (telegram_file_id is None) -> Chạy tiếp để upload
             from app.services.settings import SettingsService
             target_chat_str = await SettingsService.get_setting("TELEGRAM_TARGET_CHAT_ID")
             if not target_chat_str:
                 target_chat_str = settings.TELEGRAM_TARGET_CHAT_ID
 
-            already_uploaded = (model.telegram_file_id and model.telegram_file_id != file_id_str)
-            if model.processing_status == ProcessingStatus.completed and (already_uploaded or not target_chat_str):
-                logger.info(f"Model {model.id} ({file_name}) already completed and uploaded. Skipping re-processing.")
+            already_uploaded = (model.telegram_file_id is not None)
+            if model.processing_status == ProcessingStatus.completed and already_uploaded:
+                logger.info(f"Model {model.id} ({file_name}) already completed and uploaded to target group. Skipping.")
                 return
             
             model.processing_status = ProcessingStatus.processing
@@ -595,7 +595,20 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
                     await session.commit()
                     await _add_log(session, model, "Backup (99%)", "[99%] Upload thành công lên nhóm đích.")
                 except Exception as upload_exc:
-                    logger.error(f"[{model.id}] Failed to upload to target group: {upload_exc}")
+                    err_msg = f"Upload lên nhóm đích ({target_chat_str}) thất bại: {upload_exc}"
+                    logger.error(f"[{model.id}] {err_msg}")
+                    model.processing_error = err_msg
+                    await _add_log(session, model, "Backup (Lỗi Upload)", f"[Lỗi Upload] {err_msg}")
+                    await session.commit()
+            else:
+                if not target_chat_str:
+                    msg_warn = "[Cảnh báo] TELEGRAM_TARGET_CHAT_ID chưa được cài đặt trong System Settings hoặc .env. Bỏ qua upload lưu trữ."
+                    logger.warning(f"[{model.id}] {msg_warn}")
+                    await _add_log(session, model, "Backup (Chưa cài ID)", msg_warn)
+                elif not tmp_file or not os.path.exists(tmp_file):
+                    msg_warn = f"[Cảnh báo] Không tìm thấy file tạm {tmp_file} để upload sang nhóm đích."
+                    logger.warning(f"[{model.id}] {msg_warn}")
+                    await _add_log(session, model, "Backup (Thiếu file tạm)", msg_warn)
 
             total_elapsed = time.time() - pipeline_start
             await _add_log(session, model, "Hoàn tất (100%)", f"[100%] Hoàn tất 100% xử lý model '{model.original_filename}' trong {total_elapsed:.1f} giây!")

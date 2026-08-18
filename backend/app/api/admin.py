@@ -461,7 +461,8 @@ async def reprocess_failed_models_api(
     stmt_targets = select(Model3D).where(
         or_(
             Model3D.processing_status == ProcessingStatus.failed,
-            Model3D.telegram_file_id.is_(None)
+            Model3D.telegram_file_id.is_(None),
+            Model3D.processing_error.isnot(None)
         )
     )
     res = await db.execute(stmt_targets)
@@ -476,6 +477,7 @@ async def reprocess_failed_models_api(
     for model in target_models:
         model.processing_status = ProcessingStatus.pending
         model.processing_error = None
+        model.telegram_file_id = None  # Đánh dấu cần upload lại sang nhóm đích
         requeued_count += 1
         await redis.enqueue_job(
             'process_telegram_message',
