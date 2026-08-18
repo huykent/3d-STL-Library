@@ -460,31 +460,37 @@ async def reprocess_failed_models_api(
     """Resets failed models & completed-but-not-uploaded models to pending status and pushes them to Redis queue."""
     from app.worker.queue import get_redis_pool
     from sqlalchemy import or_
-    stmt_targets = select(Model3D).where(
-        or_(
-            Model3D.processing_status == ProcessingStatus.failed,
-            Model3D.telegram_file_id.is_(None),
-            Model3D.processing_error.isnot(None)
+    stmt_targets = (
+        select(Model3D, SourceGroup.chat_id)
+        .outerjoin(SourceGroup, Model3D.source_group_id == SourceGroup.id)
+        .where(
+            or_(
+                Model3D.processing_status == ProcessingStatus.failed,
+                Model3D.telegram_file_id.is_(None),
+                Model3D.processing_error.isnot(None)
+            )
         )
     )
     res = await db.execute(stmt_targets)
-    target_models = res.scalars().all()
+    target_items = res.all()
 
-    if not target_models:
+    if not target_items:
         return {"status": "success", "message": "No failed or un-uploaded models to reprocess", "requeued_count": 0}
 
     redis = await get_redis_pool()
     requeued_count = 0
 
-    for model in target_models:
+    for model, real_chat_id in target_items:
+        if not real_chat_id:
+            continue
         model.processing_status = ProcessingStatus.pending
         model.processing_error = None
-        model.telegram_file_id = None  # Đánh dấu cần upload lại sang nhóm đích
+        model.telegram_file_id = None  # Reset file_id so Step 6 Target Upload is forced to run
         requeued_count += 1
         await redis.enqueue_job(
             'process_telegram_message',
             message_id=model.telegram_message_id,
-            chat_id=model.source_group_id
+            chat_id=real_chat_id
         )
 
     await db.commit()

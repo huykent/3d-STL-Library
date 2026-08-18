@@ -32,6 +32,15 @@ async def start_telegram_client():
     if not await client.is_user_authorized():
         import logging
         logging.getLogger(__name__).warning("Telegram client is NOT authorized. Please login via Admin Settings.")
+    else:
+        try:
+            # Warm up Telethon entity cache for joined target channels and source groups
+            await client.get_dialogs(limit=100)
+            import logging
+            logging.getLogger(__name__).info("Successfully warmed Telethon dialog entity cache.")
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"Failed to fetch dialogs on client startup: {e}")
 
 async def stop_telegram_client():
     global _client

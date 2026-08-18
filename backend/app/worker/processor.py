@@ -505,8 +505,13 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
                     try:
                         target_entity = await telegram_client.get_entity(target_chat_id)
                     except Exception as ge_err:
-                        logger.warning(f"Could not resolve Telegram entity for {target_chat_id}: {ge_err}")
-                        target_entity = target_chat_id
+                        logger.warning(f"Could not resolve Telegram entity for {target_chat_id}: {ge_err}. Attempting get_dialogs refresh...")
+                        try:
+                            await telegram_client.get_dialogs(limit=100)
+                            target_entity = await telegram_client.get_entity(target_chat_id)
+                        except Exception as ge_err2:
+                            logger.error(f"Fallback entity resolution failed for {target_chat_id}: {ge_err2}")
+                            target_entity = target_chat_id
 
                     # Check if tmp_file exists; if missing, re-download from Telegram
                     if not tmp_file or not os.path.exists(tmp_file):
