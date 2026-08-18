@@ -18,8 +18,10 @@ import {
   FiSend,
   FiCpu,
   FiLayers,
-  FiDatabase,
-  FiUploadCloud
+  FiUploadCloud,
+  FiMessageSquare,
+  FiZap,
+  FiCode
 } from "react-icons/fi";
 
 interface ProcessingLog {
@@ -68,6 +70,18 @@ interface RecentUploadItem {
   updated_at?: string;
 }
 
+interface LLMInfo {
+  model_filename: string;
+  predicted_name: string;
+  category: string;
+  print_type: string;
+  keywords: string[];
+  system_prompt: string;
+  user_prompt: string;
+  raw_response: string;
+  updated_at?: string;
+}
+
 interface QueueSummary {
   active_count: number;
   queued_count: number;
@@ -77,6 +91,7 @@ interface QueueSummary {
 
 interface QueueStatusResponse {
   summary: QueueSummary;
+  llm_info?: LLMInfo;
   queue_info: {
     queued_jobs: QueuedJob[];
     queued_count: number;
@@ -167,7 +182,7 @@ export default function ActiveQueuePage() {
             Hệ Thống Quản Lý Hàng Chờ & Live Processing
           </h1>
           <p className="text-xs md:text-sm text-gray-400 mt-1">
-            Giám sát thời gian thực tiến trình Cào dữ liệu Telegram, Xử lý 3D/AI và Đẩy lên Nhóm Đích.
+            Giám sát thời gian thực tiến trình LLM AI Tagging, Cào dữ liệu Telegram, Xử lý 3D và Đẩy lên Nhóm Đích.
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -198,109 +213,131 @@ export default function ActiveQueuePage() {
         </div>
       )}
 
-      {/* ── GRID 4 KHUNG ĐỘC LẬP ────────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-
-        {/* ── KHUNG 1: THÔNG TIN HÀNG CHỜ (QUEUE STATUS & PENDING TASKS) ──────── */}
-        <Card className="bg-white/5 border-white/10 backdrop-blur-xl flex flex-col justify-between shadow-xl">
-          <CardHeader className="border-b border-white/10 bg-white/5 pb-4">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-lg font-bold text-white flex items-center gap-2.5">
-                <FiClock className="w-5 h-5 text-amber-400" />
-                1. Thông Tin Hàng Chờ (Queue)
-              </CardTitle>
-              <Badge variant="outline" className="bg-amber-500/20 text-amber-300 border-amber-500/40">
-                {data?.queue_info?.queued_count ?? 0} Đang Đợi
+      {/* ── 🌟 Ô TO NỔI BẬT Ở TRÊN: THÔNG TIN PROMPT ĐẾN & VỀ TỪ LLM (OLLAMA) ── */}
+      <Card className="bg-gradient-to-br from-purple-950/40 via-black/50 to-blue-950/40 border border-purple-500/30 backdrop-blur-xl shadow-2xl overflow-hidden">
+        <CardHeader className="border-b border-purple-500/20 bg-purple-950/30 pb-4">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-xl font-bold text-white flex items-center gap-3">
+              <FiZap className="w-6 h-6 text-purple-400 animate-pulse" />
+              Giao Tiếp LLM AI (Ollama Prompt Input & Output)
+            </CardTitle>
+            <div className="flex items-center gap-2">
+              <Badge className="bg-purple-500/20 text-purple-300 border-purple-500/40 font-mono text-xs">
+                Ollama Llama3.2:3b
               </Badge>
-            </div>
-          </CardHeader>
-          <CardContent className="p-6 space-y-4 flex-1 flex flex-col justify-between">
-            {/* Quick Metrics */}
-            <div className="grid grid-cols-3 gap-3 text-center">
-              <div className="bg-black/30 p-3 rounded-xl border border-white/5">
-                <p className="text-[11px] text-gray-400 uppercase tracking-wider">Trong Chờ</p>
-                <p className="text-xl font-bold text-amber-400 mt-1">{data?.summary?.queued_count ?? 0}</p>
-              </div>
-              <div className="bg-black/30 p-3 rounded-xl border border-white/5">
-                <p className="text-[11px] text-gray-400 uppercase tracking-wider">Xong Hôm Nay</p>
-                <p className="text-xl font-bold text-emerald-400 mt-1">{data?.summary?.completed_today_count ?? 0}</p>
-              </div>
-              <div className="bg-black/30 p-3 rounded-xl border border-white/5">
-                <p className="text-[11px] text-gray-400 uppercase tracking-wider">Tốc Độ TB</p>
-                <p className="text-xl font-bold text-purple-400 mt-1">~{data?.summary?.avg_processing_time_sec ?? 18}s</p>
-              </div>
-            </div>
-
-            {/* Pending List Table */}
-            <div className="space-y-2">
-              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Danh Sách File Chờ Xử Lý</p>
-              {(!data?.queued_jobs || data.queued_jobs.length === 0) ? (
-                <div className="bg-black/20 p-6 rounded-xl text-center text-xs text-gray-500 border border-white/5">
-                  Hàng chờ trống. Không có model nào đang đợi.
-                </div>
-              ) : (
-                <div className="max-h-56 overflow-y-auto rounded-xl border border-white/10 bg-black/40">
-                  <table className="w-full text-left text-xs text-gray-300">
-                    <thead className="bg-white/5 text-[10px] text-gray-400 uppercase border-b border-white/10">
-                      <tr>
-                        <th className="p-3">Pos</th>
-                        <th className="p-3">Tên File</th>
-                        <th className="p-3">Nguồn</th>
-                        <th className="p-3">Size</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-white/5">
-                      {data?.queued_jobs.map((item, idx) => (
-                        <tr key={item.id} className="hover:bg-white/5">
-                          <td className="p-3 font-mono text-amber-400 font-bold">#{idx + 1}</td>
-                          <td className="p-3 font-medium text-white max-w-[150px] truncate" title={item.original_filename}>
-                            {item.original_filename}
-                          </td>
-                          <td className="p-3 text-gray-400 max-w-[100px] truncate">{item.source_group_name}</td>
-                          <td className="p-3 font-mono">{(item.file_size_bytes / (1024 * 1024)).toFixed(1)} MB</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+              {data?.llm_info?.updated_at && (
+                <span className="text-[10px] text-gray-400 font-mono">
+                  Lần cuối: {new Date(data.llm_info.updated_at).toLocaleTimeString()}
+                </span>
               )}
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </CardHeader>
+        <CardContent className="p-6 space-y-6">
+          {data?.llm_info ? (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* 🟢 BÊN TRÁI: PROMPT GỬI ĐẾN LLM */}
+              <div className="space-y-3 bg-black/50 p-4 rounded-xl border border-blue-500/20">
+                <div className="flex items-center justify-between border-b border-blue-500/20 pb-2">
+                  <h3 className="text-sm font-bold text-blue-300 flex items-center gap-2">
+                    <FiCode className="w-4 h-4 text-blue-400" />
+                    1. Prompt Gửi Đến LLM (User Input)
+                  </h3>
+                  <Badge variant="outline" className="bg-blue-500/10 text-blue-300 border-blue-500/30 text-[10px] truncate max-w-[180px]">
+                    {data.llm_info.model_filename}
+                  </Badge>
+                </div>
+                <div className="space-y-2">
+                  <p className="text-[11px] text-gray-400 font-semibold uppercase tracking-wider">System Instruction:</p>
+                  <pre className="bg-black/70 p-3 rounded-lg text-[11px] text-gray-300 font-mono border border-white/5 whitespace-pre-wrap max-h-28 overflow-y-auto">
+                    {data.llm_info.system_prompt || "Bạn là một chuyên gia in 3D. Hãy phân tích các thông số và NỘI DUNG TIN NHẮN..."}
+                  </pre>
+                </div>
+                <div className="space-y-2">
+                  <p className="text-[11px] text-gray-400 font-semibold uppercase tracking-wider">User Prompt Payload:</p>
+                  <pre className="bg-black/70 p-3 rounded-lg text-[11px] text-cyan-300 font-mono border border-white/5 whitespace-pre-wrap max-h-36 overflow-y-auto">
+                    {data.llm_info.user_prompt}
+                  </pre>
+                </div>
+              </div>
 
-        {/* ── KHUNG 2: THÔNG TIN CÀO (TELEGRAM CRAWLER STATUS) ──────────────── */}
+              {/* 🟣 BÊN PHẢI: PROMPT PHẢN HỒI VỀ TỪ LLM */}
+              <div className="space-y-3 bg-black/50 p-4 rounded-xl border border-purple-500/20">
+                <div className="flex items-center justify-between border-b border-purple-500/20 pb-2">
+                  <h3 className="text-sm font-bold text-purple-300 flex items-center gap-2">
+                    <FiMessageSquare className="w-4 h-4 text-purple-400" />
+                    2. Prompt Phản Hồi Về (LLM JSON Response)
+                  </h3>
+                  <div className="flex items-center gap-1.5">
+                    <Badge className="bg-emerald-500/20 text-emerald-300 border-emerald-500/30 text-[10px]">
+                      {data.llm_info.print_type}
+                    </Badge>
+                    <Badge className="bg-purple-500/20 text-purple-300 border-purple-500/30 text-[10px]">
+                      {data.llm_info.category}
+                    </Badge>
+                  </div>
+                </div>
+
+                <div className="bg-purple-950/20 p-3 rounded-lg border border-purple-500/20 space-y-1">
+                  <p className="text-xs font-bold text-white">Tên dự đoán: <span className="text-purple-300">{data.llm_info.predicted_name}</span></p>
+                  <div className="flex flex-wrap gap-1 pt-1">
+                    {data.llm_info.keywords.map((kw, i) => (
+                      <span key={i} className="text-[10px] bg-purple-500/10 text-purple-300 border border-purple-500/30 px-2 py-0.5 rounded-full">
+                        #{kw}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <p className="text-[11px] text-gray-400 font-semibold uppercase tracking-wider">Raw JSON Output:</p>
+                  <pre className="bg-black/70 p-3 rounded-lg text-[11px] text-emerald-400 font-mono border border-white/5 whitespace-pre-wrap max-h-40 overflow-y-auto">
+                    {data.llm_info.raw_response}
+                  </pre>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="bg-black/30 p-8 rounded-xl text-center space-y-2 border border-white/5">
+              <FiZap className="w-8 h-8 text-purple-400/80 mx-auto" />
+              <p className="text-sm font-medium text-white">Chưa Có Dữ Liệu LLM Prompt Trong Phiên Này</p>
+              <p className="text-xs text-gray-400">Khi worker xử lý bài đăng mới, prompt gửi tới Ollama & kết quả trả về sẽ hiển thị realtime ở đây.</p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* ── 3 KHUNG Ở GIỮA: CÀO, PROCESSING & THÔNG TIN ĐẨY TELEGRAM ĐÍCH ────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+        {/* ── KHUNG 1: THÔNG TIN CÀO (TELEGRAM CRAWLER) ─────────────────────── */}
         <Card className="bg-white/5 border-white/10 backdrop-blur-xl flex flex-col justify-between shadow-xl">
           <CardHeader className="border-b border-white/10 bg-white/5 pb-4">
             <div className="flex items-center justify-between">
-              <CardTitle className="text-lg font-bold text-white flex items-center gap-2.5">
-                <FiRadio className="w-5 h-5 text-cyan-400 animate-pulse" />
-                2. Thông Tin Cào (Telegram Crawler)
+              <CardTitle className="text-base font-bold text-white flex items-center gap-2">
+                <FiRadio className="w-4 h-4 text-cyan-400 animate-pulse" />
+                1. Thông Tin Cào (Crawler)
               </CardTitle>
-              <Badge className="bg-cyan-500/20 text-cyan-300 border-cyan-500/40">
-                Userbot Active
-              </Badge>
-            </div>
-          </CardHeader>
-          <CardContent className="p-6 space-y-4 flex-1 flex flex-col justify-between">
-            {/* Status Header */}
-            <div className="bg-cyan-950/40 border border-cyan-500/30 p-3.5 rounded-xl flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <span className="w-3 h-3 rounded-full bg-cyan-400 animate-ping" />
-                <div>
-                  <p className="text-xs font-bold text-cyan-200">Trạng Thái Telegram Listener</p>
-                  <p className="text-[11px] text-cyan-400/80">Tự động lắng nghe tin nhắn mới & cào lịch sử</p>
-                </div>
-              </div>
-              <Badge variant="outline" className="bg-black/40 text-cyan-300 border-cyan-500/30 text-xs font-mono">
+              <Badge className="bg-cyan-500/20 text-cyan-300 border-cyan-500/40 text-[10px]">
                 {data?.crawl_info?.total_groups ?? 0} Nhóm Nguồn
               </Badge>
             </div>
+          </CardHeader>
+          <CardContent className="p-4 space-y-3 flex-1 flex flex-col justify-between">
+            <div className="bg-cyan-950/40 border border-cyan-500/30 p-3 rounded-xl flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-ping" />
+                <div>
+                  <p className="text-xs font-bold text-cyan-200">Telegram Listener Active</p>
+                  <p className="text-[10px] text-cyan-400/80">Lắng nghe tin nhắn mới & cào lịch sử</p>
+                </div>
+              </div>
+            </div>
 
-            {/* Source Groups List */}
-            <div className="space-y-2">
-              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Danh Sách Nhóm Đang Quét</p>
+            <div className="space-y-1.5">
+              <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Danh Sách Nhóm Nguồn</p>
               {(!data?.crawl_info?.source_groups || data.crawl_info.source_groups.length === 0) ? (
-                <div className="bg-black/20 p-6 rounded-xl text-center text-xs text-gray-500 border border-white/5">
+                <div className="bg-black/20 p-4 rounded-xl text-center text-xs text-gray-500 border border-white/5">
                   Chưa cài đặt nhóm nguồn cào Telegram.
                 </div>
               ) : (
@@ -308,17 +345,15 @@ export default function ActiveQueuePage() {
                   {data.crawl_info.source_groups.map((group) => (
                     <div
                       key={group.id}
-                      className="bg-black/30 border border-white/10 p-3 rounded-xl flex items-center justify-between hover:border-cyan-500/40 transition-colors"
+                      className="bg-black/30 border border-white/10 p-2.5 rounded-xl flex items-center justify-between hover:border-cyan-500/40 transition-colors"
                     >
                       <div className="space-y-0.5">
-                        <p className="text-xs font-bold text-white max-w-[200px] truncate">{group.name}</p>
+                        <p className="text-xs font-bold text-white max-w-[170px] truncate">{group.name}</p>
                         <p className="text-[10px] text-gray-400 font-mono">ID: {group.chat_id} • Msg: #{group.last_message_id || 0}</p>
                       </div>
-                      <div className="text-right">
-                        <Badge variant="outline" className="bg-blue-500/10 text-blue-300 border-blue-500/30 text-[10px]">
-                          {group.model_count} Models
-                        </Badge>
-                      </div>
+                      <Badge variant="outline" className="bg-blue-500/10 text-blue-300 border-blue-500/30 text-[10px]">
+                        {group.model_count} Models
+                      </Badge>
                     </div>
                   ))}
                 </div>
@@ -327,48 +362,46 @@ export default function ActiveQueuePage() {
           </CardContent>
         </Card>
 
-        {/* ── KHUNG 3: THÔNG TIN PROCESSING (3D GEOMETRY, AI & THUMBNAIL) ────── */}
+        {/* ── KHUNG 2: THÔNG TIN PROCESSING (3D & THUMBNAIL) ────────────────── */}
         <Card className="bg-white/5 border-white/10 backdrop-blur-xl flex flex-col justify-between shadow-xl">
           <CardHeader className="border-b border-white/10 bg-white/5 pb-4">
             <div className="flex items-center justify-between">
-              <CardTitle className="text-lg font-bold text-white flex items-center gap-2.5">
-                <FiCpu className="w-5 h-5 text-blue-400 animate-spin" />
-                3. Thông Tin Processing (3D & AI)
+              <CardTitle className="text-base font-bold text-white flex items-center gap-2">
+                <FiCpu className="w-4 h-4 text-blue-400 animate-spin" />
+                2. Thông Tin Processing (3D)
               </CardTitle>
-              <Badge className="bg-blue-500/20 text-blue-300 border-blue-500/40">
-                {data?.processing_info?.count ?? 0} Models Đang Xử Lý
+              <Badge className="bg-blue-500/20 text-blue-300 border-blue-500/40 text-[10px]">
+                {data?.processing_info?.count ?? 0} Active
               </Badge>
             </div>
           </CardHeader>
-          <CardContent className="p-6 space-y-4 flex-1 flex flex-col justify-between">
+          <CardContent className="p-4 space-y-3 flex-1 flex flex-col justify-between">
             {(!data?.processing_info?.active_processing || data.processing_info.active_processing.length === 0) ? (
-              <div className="bg-black/20 p-8 rounded-xl text-center space-y-2 border border-white/5 my-auto">
-                <FiCheckCircle className="w-8 h-8 text-emerald-400/80 mx-auto" />
-                <p className="text-xs font-medium text-white">Không có model nào đang đo đạc 3D / AI</p>
-                <p className="text-[11px] text-gray-500">Worker đang ở trạng thái chờ sẵn sàng.</p>
+              <div className="bg-black/20 p-6 rounded-xl text-center space-y-1.5 border border-white/5 my-auto">
+                <FiCheckCircle className="w-6 h-6 text-emerald-400/80 mx-auto" />
+                <p className="text-xs font-medium text-white">Không có model nào đang đo đạc 3D</p>
+                <p className="text-[10px] text-gray-500">Worker sẵn sàng xử lý file tiếp theo.</p>
               </div>
             ) : (
-              <div className="space-y-4 max-h-80 overflow-y-auto pr-1">
+              <div className="space-y-3 max-h-64 overflow-y-auto pr-1">
                 {data.processing_info.active_processing.map((job) => {
                   const pct = getProgressPercentage(job.current_message);
                   const isExpanded = expandedLogs[job.id] ?? true;
 
                   return (
-                    <div key={job.id} className="bg-black/40 border border-blue-500/30 p-4 rounded-xl space-y-3">
+                    <div key={job.id} className="bg-black/40 border border-blue-500/30 p-3 rounded-xl space-y-2">
                       <div className="flex items-center justify-between gap-2">
-                        <span className="text-xs font-bold text-white truncate max-w-[220px]" title={job.original_filename}>
+                        <span className="text-xs font-bold text-white truncate max-w-[170px]" title={job.original_filename}>
                           {job.original_filename}
                         </span>
                         <span className="text-xs font-black text-blue-400 font-mono">{pct}%</span>
                       </div>
 
-                      {/* Progress Bar */}
                       <div className="space-y-1">
                         <div className="flex justify-between text-[10px] text-gray-400">
                           <span>{job.current_step}</span>
-                          <span className="truncate max-w-[180px]">{job.current_message}</span>
                         </div>
-                        <div className="w-full h-2 bg-gray-800 rounded-full overflow-hidden border border-white/10">
+                        <div className="w-full h-1.5 bg-gray-800 rounded-full overflow-hidden border border-white/10">
                           <div
                             className="h-full bg-gradient-to-r from-blue-500 to-indigo-400 transition-all duration-500"
                             style={{ width: `${pct}%` }}
@@ -376,26 +409,23 @@ export default function ActiveQueuePage() {
                         </div>
                       </div>
 
-                      {/* Log Console */}
                       <div className="flex justify-between items-center pt-1">
                         <span className="text-[10px] text-gray-400">Msg ID: #{job.telegram_message_id}</span>
                         <Button
                           variant="ghost"
                           size="sm"
                           onClick={() => toggleLogs(job.id)}
-                          className="text-gray-300 hover:bg-white/10 text-[10px] h-6 px-2 flex items-center gap-1"
+                          className="text-gray-300 hover:bg-white/10 text-[9px] h-5 px-1.5 flex items-center gap-1"
                         >
-                          <FiTerminal className="w-3 h-3" />
-                          Log Console {isExpanded ? <FiChevronUp /> : <FiChevronDown />}
+                          <FiTerminal className="w-3 h-3" /> Log {isExpanded ? <FiChevronUp /> : <FiChevronDown />}
                         </Button>
                       </div>
 
                       {isExpanded && (
-                        <div className="bg-black/80 rounded-lg p-3 font-mono text-[10px] text-emerald-400/90 space-y-1 max-h-32 overflow-y-auto border border-white/10">
+                        <div className="bg-black/80 rounded-lg p-2 font-mono text-[9px] text-emerald-400/90 space-y-1 max-h-24 overflow-y-auto border border-white/10">
                           {job.logs.map((l, i) => (
                             <div key={i} className="leading-tight">
-                              <span className="text-gray-500">[{new Date(l.time).toLocaleTimeString()}]</span>{" "}
-                              <span className="text-blue-400 font-bold">[{l.step}]</span> {l.message}
+                              <span className="text-gray-500">[{new Date(l.time).toLocaleTimeString()}]</span> <span className="text-blue-400">[{l.step}]</span> {l.message}
                             </div>
                           ))}
                         </div>
@@ -408,73 +438,52 @@ export default function ActiveQueuePage() {
           </CardContent>
         </Card>
 
-        {/* ── KHUNG 4: THÔNG TIN ĐẨY LÊN TELEGRAM ĐÍCH (TARGET GROUP UPLOAD) ───── */}
+        {/* ── KHUNG 3: THÔNG TIN ĐẨY LÊN TELEGRAM ĐÍCH (TARGET GROUP UPLOAD) ───── */}
         <Card className="bg-white/5 border-white/10 backdrop-blur-xl flex flex-col justify-between shadow-xl">
           <CardHeader className="border-b border-white/10 bg-white/5 pb-4">
             <div className="flex items-center justify-between">
-              <CardTitle className="text-lg font-bold text-white flex items-center gap-2.5">
-                <FiSend className="w-5 h-5 text-emerald-400" />
-                4. Thông Tin Đẩy Telegram Đích
+              <CardTitle className="text-base font-bold text-white flex items-center gap-2">
+                <FiSend className="w-4 h-4 text-emerald-400" />
+                3. Đẩy Telegram Đích
               </CardTitle>
-              <Badge variant="outline" className="bg-emerald-500/20 text-emerald-300 border-emerald-500/40">
-                Target Chat Configured
+              <Badge variant="outline" className="bg-emerald-500/20 text-emerald-300 border-emerald-500/40 text-[10px]">
+                Target OK
               </Badge>
             </div>
           </CardHeader>
-          <CardContent className="p-6 space-y-4 flex-1 flex flex-col justify-between">
-            {/* Target Channel Info */}
-            <div className="bg-emerald-950/30 border border-emerald-500/30 p-3.5 rounded-xl flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <FiUploadCloud className="w-5 h-5 text-emerald-400" />
+          <CardContent className="p-4 space-y-3 flex-1 flex flex-col justify-between">
+            <div className="bg-emerald-950/30 border border-emerald-500/30 p-3 rounded-xl flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <FiUploadCloud className="w-4 h-4 text-emerald-400" />
                 <div>
                   <p className="text-xs font-bold text-emerald-200">Nhóm Đích Lưu Trữ</p>
                   <p className="text-[10px] font-mono text-emerald-400/80">ID: {data?.target_upload_info?.target_chat_id ?? "Chưa cấu hình"}</p>
                 </div>
               </div>
-              <Badge className="bg-emerald-500/20 text-emerald-300 border-emerald-500/30 text-[10px]">
-                Auto Backup 98%
-              </Badge>
             </div>
 
-            {/* Active Uploads */}
-            {data?.target_upload_info?.active_uploads && data.target_upload_info.active_uploads.length > 0 && (
-              <div className="space-y-2">
-                <p className="text-xs font-semibold text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-                  Đang Upload Sang Nhóm Đích
-                </p>
-                {data.target_upload_info.active_uploads.map((uJob) => (
-                  <div key={uJob.id} className="bg-emerald-950/40 border border-emerald-500/40 p-3 rounded-xl space-y-2">
-                    <p className="text-xs font-bold text-white truncate">{uJob.original_filename}</p>
-                    <p className="text-[10px] text-emerald-300">{uJob.current_message}</p>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Recent Uploaded Items List */}
-            <div className="space-y-2">
-              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Bài Mới Đăng Nhóm Đích Gần Đây</p>
+            <div className="space-y-1.5">
+              <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Bài Mới Đăng Gần Đây</p>
               {(!data?.target_upload_info?.recent_uploads || data.target_upload_info.recent_uploads.length === 0) ? (
-                <div className="bg-black/20 p-6 rounded-xl text-center text-xs text-gray-500 border border-white/5">
+                <div className="bg-black/20 p-4 rounded-xl text-center text-xs text-gray-500 border border-white/5">
                   Chưa có bài đăng gần đây.
                 </div>
               ) : (
-                <div className="max-h-52 overflow-y-auto space-y-2 pr-1">
+                <div className="max-h-48 overflow-y-auto space-y-2 pr-1">
                   {data.target_upload_info.recent_uploads.map((item) => (
                     <div
                       key={item.id}
                       className="bg-black/30 border border-white/10 p-2.5 rounded-xl flex items-center justify-between"
                     >
-                      <div className="space-y-0.5 max-w-[200px]">
+                      <div className="space-y-0.5 max-w-[150px]">
                         <p className="text-xs font-medium text-white truncate" title={item.original_filename}>
                           {item.original_filename}
                         </p>
-                        <p className="text-[10px] text-gray-500 font-mono">
-                          {item.source_group_name} • {item.face_count ? `${item.face_count.toLocaleString()} faces` : 'Ok'}
+                        <p className="text-[9px] text-gray-500 font-mono">
+                          {item.source_group_name}
                         </p>
                       </div>
-                      <Badge variant="outline" className="bg-emerald-500/10 text-emerald-400 border-emerald-500/30 text-[10px]">
+                      <Badge variant="outline" className="bg-emerald-500/10 text-emerald-400 border-emerald-500/30 text-[9px]">
                         ✓ Backup OK
                       </Badge>
                     </div>
@@ -486,6 +495,83 @@ export default function ActiveQueuePage() {
         </Card>
 
       </div>
+
+      {/* ── 🔽 KHUNG 4 Ở CUỐI: THÔNG TIN HÀNG CHỜ (QUEUE STATUS & PENDING LIST) ── */}
+      <Card className="bg-white/5 border-white/10 backdrop-blur-xl shadow-xl">
+        <CardHeader className="border-b border-white/10 bg-white/5 pb-4">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-xl font-bold text-white flex items-center gap-3">
+              <FiClock className="w-6 h-6 text-amber-400" />
+              4. Thông Tin Hàng Chờ & Thống Kê Tổng Quan (Queue Status)
+            </CardTitle>
+            <Badge variant="outline" className="bg-amber-500/20 text-amber-300 border-amber-500/40 text-xs">
+              {data?.queue_info?.queued_count ?? 0} Task Trong Hàng Chờ
+            </Badge>
+          </div>
+        </CardHeader>
+        <CardContent className="p-6 space-y-6">
+          {/* Metrics Overview */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="bg-black/30 p-4 rounded-xl border border-white/5 text-center">
+              <p className="text-xs text-gray-400 uppercase tracking-wider font-semibold">Đang Chờ Xử Lý</p>
+              <p className="text-3xl font-bold text-amber-400 mt-2">{data?.summary?.queued_count ?? 0}</p>
+              <p className="text-[10px] text-gray-500 mt-1">Pending in Redis Queue</p>
+            </div>
+            <div className="bg-black/30 p-4 rounded-xl border border-white/5 text-center">
+              <p className="text-xs text-gray-400 uppercase tracking-wider font-semibold">Hoàn Thành Hôm Nay</p>
+              <p className="text-3xl font-bold text-emerald-400 mt-2">{data?.summary?.completed_today_count ?? 0}</p>
+              <p className="text-[10px] text-gray-500 mt-1">Processed Today</p>
+            </div>
+            <div className="bg-black/30 p-4 rounded-xl border border-white/5 text-center">
+              <p className="text-xs text-gray-400 uppercase tracking-wider font-semibold">Tốc Độ Xử Lý Trung Bình</p>
+              <p className="text-3xl font-bold text-purple-400 mt-2">~{data?.summary?.avg_processing_time_sec ?? 18}s</p>
+              <p className="text-[10px] text-gray-500 mt-1">Per Model Pipeline</p>
+            </div>
+          </div>
+
+          {/* Pending Queue Table */}
+          <div className="space-y-3">
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Danh Sách Chi Tiết Hàng Chờ Redis</p>
+            {(!data?.queued_jobs || data.queued_jobs.length === 0) ? (
+              <div className="bg-black/20 p-8 rounded-xl text-center text-xs text-gray-500 border border-white/5">
+                Hàng chờ trống. Tất cả các task đã được xử lý xong!
+              </div>
+            ) : (
+              <div className="overflow-x-auto rounded-xl border border-white/10 bg-black/40">
+                <table className="w-full text-left text-xs text-gray-300">
+                  <thead className="bg-white/5 text-[10px] text-gray-400 uppercase tracking-wider border-b border-white/10">
+                    <tr>
+                      <th className="p-4">Vị Trí #</th>
+                      <th className="p-4">Tên File 3D</th>
+                      <th className="p-4">Nhóm Nguồn</th>
+                      <th className="p-4">Dung Lượng</th>
+                      <th className="p-4">Trạng Thái</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {data?.queued_jobs.map((item, idx) => (
+                      <tr key={item.id} className="hover:bg-white/5 transition-colors">
+                        <td className="p-4 font-mono text-amber-400 font-bold">#{idx + 1}</td>
+                        <td className="p-4 font-medium text-white max-w-sm truncate" title={item.original_filename}>
+                          {item.original_filename}
+                        </td>
+                        <td className="p-4 text-gray-400">{item.source_group_name}</td>
+                        <td className="p-4 font-mono">{(item.file_size_bytes / (1024 * 1024)).toFixed(1)} MB</td>
+                        <td className="p-4">
+                          <Badge variant="outline" className="bg-amber-500/10 text-amber-400 border-amber-500/30">
+                            Pending Queue
+                          </Badge>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
     </div>
   );
 }

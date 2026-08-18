@@ -362,6 +362,50 @@ async def get_queue_status_api(
             "updated_at": model.updated_at.isoformat() if model.updated_at else None
         })
 
+    # Latest LLM AI Prompt & Response tracking
+    stmt_llm = (
+        select(Model3D)
+        .where(Model3D.ai_raw_response.isnot(None))
+        .order_by(Model3D.updated_at.desc())
+        .limit(1)
+    )
+    latest_llm_model = (await db.execute(stmt_llm)).scalars().first()
+
+    llm_info = None
+    if latest_llm_model and latest_llm_model.ai_raw_response:
+        raw_info = latest_llm_model.ai_raw_response
+        if isinstance(raw_info, dict):
+            req = raw_info.get("request_payload", {})
+            msgs = req.get("messages", [])
+            system_p = next((m.get("content") for m in msgs if isinstance(m, dict) and m.get("role") == "system"), "")
+            user_p = next((m.get("content") for m in msgs if isinstance(m, dict) and m.get("role") == "user"), "")
+
+            resp_data = raw_info.get("response_data", {})
+            choices = resp_data.get("choices", []) if isinstance(resp_data, dict) else []
+            content_out = choices[0]["message"]["content"] if (choices and isinstance(choices[0], dict)) else ""
+
+            import json
+            kw_val = latest_llm_model.ai_keywords or []
+            if isinstance(kw_val, str):
+                kw_val = [k.strip() for k in kw_val.split(',') if k.strip()]
+
+            llm_info = {
+                "model_filename": latest_llm_model.original_filename,
+                "predicted_name": latest_llm_model.predicted_name or "Unknown",
+                "category": latest_llm_model.ai_category or "Other",
+                "print_type": latest_llm_model.ai_print_type.value if hasattr(latest_llm_model.ai_print_type, 'value') else str(latest_llm_model.ai_print_type or "Unknown"),
+                "keywords": kw_val,
+                "system_prompt": system_p,
+                "user_prompt": user_p or f"Phân tích model 3D: {latest_llm_model.original_filename} ({latest_llm_model.face_count or 0:,} faces)",
+                "raw_response": content_out or json.dumps({
+                    "predicted_name": latest_llm_model.predicted_name,
+                    "category": latest_llm_model.ai_category,
+                    "print_type": str(latest_llm_model.ai_print_type),
+                    "keywords": kw_val
+                }, ensure_ascii=False, indent=2),
+                "updated_at": latest_llm_model.updated_at.isoformat() if latest_llm_model.updated_at else None
+            }
+
     # Summary count
     today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
     stmt_completed_today = select(func.count(Model3D.id)).where(
@@ -378,6 +422,7 @@ async def get_queue_status_api(
             "completed_today_count": completed_today_count,
             "avg_processing_time_sec": 18.0
         },
+        "llm_info": llm_info,
         "queue_info": {
             "queued_jobs": queued_jobs,
             "queued_count": len(queued_jobs),
