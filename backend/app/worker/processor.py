@@ -134,65 +134,90 @@ async def _fetch_related_images(telegram_client, chat_id: int, base_message) -> 
 
     Covers 3 patterns:
       A) File + photos share the same grouped_id (Telegram Media Group / Album)
-      B) Photos posted right before the file as a separate album (Pixel 3D STL style)
+      B) Photos posted right before/after the file as a separate album (3D Pixel STL style with 4 demo photos)
       C) Photos posted as standalone messages adjacent to the file (no grouped_id)
     """
     from telethon.tl.types import MessageMediaPhoto
 
     images: list = []
     try:
-        grouped_id = base_message.grouped_id
+        grouped_id = getattr(base_message, 'grouped_id', None)
 
-        # ── Fetch messages BEFORE the base message (up to 15 messages older) ──
+        # ── Fetch messages BEFORE the base message (up to 12 messages older) ──
         msgs_before = await telegram_client.get_messages(
-            chat_id, limit=15, offset_id=base_message.id
+            chat_id, limit=12, offset_id=base_message.id
         )
         # ── Fetch messages AFTER the base message (min_id trick) ────────────
-        # get_messages with min_id returns messages NEWER than that ID
         msgs_after = await telegram_client.get_messages(
-            chat_id, limit=15, min_id=base_message.id
+            chat_id, limit=12, min_id=base_message.id
         )
 
         all_msgs = list(msgs_before or []) + list(msgs_after or [])
         if not all_msgs:
             return []
 
+        image_candidates = []
         for msg in all_msgs:
             if msg.id == base_message.id:
                 continue
 
-            # ── Kiểm tra đây có phải ảnh không ─────────────────────────────
+            # Check if message is a photo or image document
             is_image = False
             if isinstance(msg.media, MessageMediaPhoto):
                 is_image = True
             elif msg.document and msg.document.mime_type and msg.document.mime_type.startswith('image/'):
                 is_image = True
 
-            if not is_image:
-                continue
+            if is_image:
+                image_candidates.append(msg)
 
-            if grouped_id:
-                # Pattern A: base_message thuộc album → chỉ lấy ảnh cùng grouped_id
-                if msg.grouped_id == grouped_id:
-                    images.append(msg)
+        if not image_candidates:
+            return []
+
+        if grouped_id:
+            # Pattern A: base_message belongs to an album
+            images = [m for m in image_candidates if getattr(m, 'grouped_id', None) == grouped_id]
+        else:
+            # Pattern B + C: base_message is a file without grouped_id
+            # 3D Pixel STL: 4 photos sent as an album right before or after the 3D file.
+            
+            # 1. Look for nearest photo album (grouped_id) adjacent to base_message
+            grouped_candidates = {}
+            for m in image_candidates:
+                gid = getattr(m, 'grouped_id', None)
+                if gid:
+                    grouped_candidates.setdefault(gid, []).append(m)
+
+            # Find if there is an album within 8 message IDs and 5 minutes
+            best_album_id = None
+            min_dist = 999
+            for gid, plist in grouped_candidates.items():
+                for m in plist:
+                    id_dist = abs(m.id - base_message.id)
+                    time_dist = abs((m.date - base_message.date).total_seconds()) if m.date and base_message.date else 0
+                    if id_dist <= 8 and time_dist <= 300 and id_dist < min_dist:
+                        min_dist = id_dist
+                        best_album_id = gid
+
+            if best_album_id and best_album_id in grouped_candidates:
+                images = grouped_candidates[best_album_id]
             else:
-                # Pattern B + C: base_message là file độc lập (không có grouped_id)
-                # Pixel 3D STL: post album ảnh trước rồi file STL sau → ảnh có grouped_id,
-                # file thì không — KHÔNG lọc bỏ msg.grouped_id is not None nữa.
-                id_diff = abs(msg.id - base_message.id)
-                time_diff = abs((msg.date - base_message.date).total_seconds())
+                # Standalone photos: take up to 4 closest adjacent photos within 5 message IDs and 5 minutes
+                standalone = []
+                for m in image_candidates:
+                    id_dist = abs(m.id - base_message.id)
+                    time_dist = abs((m.date - base_message.date).total_seconds()) if m.date and base_message.date else 0
+                    is_reply = (
+                        getattr(m, 'reply_to_msg_id', None) == base_message.id or
+                        getattr(base_message, 'reply_to_msg_id', None) == m.id
+                    )
+                    if is_reply or (id_dist <= 5 and time_dist <= 300):
+                        standalone.append((id_dist, m))
+                
+                standalone.sort(key=lambda x: x[0])
+                images = [item[1] for item in standalone[:4]]
 
-                is_reply = (
-                    getattr(msg, 'reply_to_msg_id', None) == base_message.id or
-                    getattr(base_message, 'reply_to_msg_id', None) == msg.id
-                )
-                # Same sender, within ±10 message IDs, within 10 minutes
-                same_sender = msg.sender_id == base_message.sender_id
-
-                if is_reply or (same_sender and id_diff <= 10 and time_diff <= 600):
-                    images.append(msg)
-
-        # Sort by message ID ascending (chronological order)
+        # Sort images in chronological order
         images.sort(key=lambda m: m.id)
 
     except Exception as e:
