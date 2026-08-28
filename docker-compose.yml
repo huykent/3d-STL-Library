@@ -1,0 +1,117 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: stl_postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-stluser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-stlpass}
+      POSTGRES_DB: ${POSTGRES_DB:-stl_library}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-stluser} -d ${POSTGRES_DB:-stl_library}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: stl_redis
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: stl_api
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-stluser}:${POSTGRES_PASSWORD:-stlpass}@postgres:5432/${POSTGRES_DB:-stl_library}
+      - REDIS_URL=redis://redis:6379/0
+      - TELEGRAM_API_ID=${TELEGRAM_API_ID}
+      - TELEGRAM_API_HASH=${TELEGRAM_API_HASH}
+      - TELEGRAM_PHONE=${TELEGRAM_PHONE}
+      - TELEGRAM_SESSION_NAME=/app/sessions/stl_crawler
+      - TELEGRAM_CHAT_IDS=${TELEGRAM_CHAT_IDS}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2:3b}
+      - SECRET_KEY=${SECRET_KEY}
+      - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES:-60}
+      - REFRESH_TOKEN_EXPIRE_DAYS=${REFRESH_TOKEN_EXPIRE_DAYS:-7}
+      - THUMBNAIL_DIR=/app/thumbnails
+      - TEMP_DIR=/app/temp
+      - TELEGRAM_TARGET_CHAT_ID=${TELEGRAM_TARGET_CHAT_ID}
+    ports:
+      - "8000:8000"
+    volumes:
+      - app_thumbnails:/app/thumbnails
+      - app_temp:/app/temp
+      - telegram_session:/app/sessions
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: stl_worker
+    command: ["arq", "app.worker.queue.WorkerSettings"]
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-stluser}:${POSTGRES_PASSWORD:-stlpass}@postgres:5432/${POSTGRES_DB:-stl_library}
+      - REDIS_URL=redis://redis:6379/0
+      - TELEGRAM_API_ID=${TELEGRAM_API_ID}
+      - TELEGRAM_API_HASH=${TELEGRAM_API_HASH}
+      - TELEGRAM_PHONE=${TELEGRAM_PHONE}
+      - TELEGRAM_SESSION_NAME=/app/sessions/stl_crawler
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2:3b}
+      - THUMBNAIL_DIR=/app/thumbnails
+      - TEMP_DIR=/app/temp
+      - TELEGRAM_TARGET_CHAT_ID=${TELEGRAM_TARGET_CHAT_ID}
+    volumes:
+      - app_thumbnails:/app/thumbnails
+      - app_temp:/app/temp
+      - telegram_session:/app/sessions
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_started
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: stl_frontend
+    environment:
+      - API_URL=http://api:8000
+    ports:
+      - "3005:3000"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  app_thumbnails:
+  app_temp:
+  telegram_session:

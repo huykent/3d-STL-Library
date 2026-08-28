@@ -1,0 +1,6 @@
+{
+  "name": "superpowers",
+  "version": "6.2.0",
+  "description": "Superpowers: TDD, systematic debugging, brainstorming, writing-plans, executing-plans, subagent-driven development, and more.",
+  "skillsDir": "../../superpowers/skills"
+}

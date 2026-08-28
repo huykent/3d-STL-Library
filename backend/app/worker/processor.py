@@ -1,0 +1,747 @@
+"""arq worker task: full 3D model processing pipeline.
+
+This function is called by arq when a 'process_telegram_message' job is
+dequeued from Redis. It orchestrates the full pipeline:
+
+  1. Look up Model3D in DB by telegram_message_id
+  2. Download temp STL/OBJ from Telegram
+  3. Analyze geometry with trimesh (stl_analyzer)
+  4. Render thumbnail with pyrender (thumbnail)
+  5. Get AI tags from Ollama (ai_tagger)
+  6. Persist all results to PostgreSQL
+  7. Delete temp file — ALWAYS, even on failure (try/finally)
+
+Critical constraint: temp file MUST be cleaned up in a try/finally block.
+"""
+from __future__ import annotations
+
+import logging
+import os
+import time
+import asyncio
+
+from sqlalchemy import select
+
+
+from app.config import get_settings
+from app.database import AsyncSessionLocal
+from app.models.model3d import DetailLevel, Model3D, PrintType, ProcessingStatus
+from app.services.ai_tagger import tag_model
+from app.services.fast_mesh import FastMeshInfo, inspect_3d_file, parse_stl_header_bytes
+from app.telegram.downloader import download_telegram_document, extract_3d_files
+
+logger = logging.getLogger(__name__)
+
+# ── Global download lock: chỉ tải 1 file Telegram tại một thời điểm ──────────
+# Giúp ngăn FloodWait do gửi quá nhiều request song song đến Telegram
+DOWNLOAD_SEMAPHORE = asyncio.Semaphore(3)  # Premium: cho phép 3 file tải song song
+
+from datetime import datetime
+from sqlalchemy.ext.asyncio import AsyncSession
+
+async def _add_log(session: AsyncSession, model: Model3D, step: str, message: str, path: str = None) -> None:
+    """Helper to append a processing log and commit immediately."""
+    from datetime import datetime
+    log_entry = {
+        "step": step,
+        "message": message,
+        "time": datetime.utcnow().isoformat()
+    }
+    if path:
+        log_entry["path"] = path
+    
+    current_logs = model.processing_logs or []
+    current_logs.append(log_entry)
+    model.processing_logs = list(current_logs)
+    model.updated_at = datetime.utcnow()
+    
+    logger.info(f"[{model.id}] {step}: {message}")
+
+
+async def _add_log_by_id(model_id, step: str, message: str) -> None:
+    """Independent session helper for background thread logging during download."""
+    try:
+        async with AsyncSessionLocal() as session:
+            stmt = select(Model3D).where(Model3D.id == model_id)
+            res = await session.execute(stmt)
+            m = res.scalars().first()
+            if m:
+                logs = list(m.processing_logs or [])
+                logs.append({
+                    "step": step,
+                    "message": message,
+                    "time": datetime.utcnow().isoformat()
+                })
+                m.processing_logs = logs
+                m.updated_at = datetime.utcnow()
+                await session.commit()
+    except Exception as e:
+        logger.warning(f"Error in _add_log_by_id: {e}")
+
+
+async def _assign_tags_to_model(session: AsyncSession, model: Model3D, keyword_str: str) -> None:
+    """Parse keyword string, upsert Tag records (PostgreSQL ON CONFLICT), and assign to model.tags."""
+    import re as _re
+    from app.models.tag import Tag
+    from sqlalchemy import select as _select
+
+    if not keyword_str:
+        return
+
+    # Clean tag names: remove emojis and special symbols so name and slug are clean
+    raw_list = [k.strip().lower() for k in str(keyword_str).replace(',', ' ').split() if k.strip()]
+    cleaned_names = []
+    for k in raw_list:
+        clean_w = _re.sub(r'[^a-zA-Z0-9_\u00C0-\u024F\u1E00-\u1EFF-]', '', k).strip()
+        if clean_w and len(clean_w) >= 2:
+            cleaned_names.append(clean_w)
+
+    # De-duplicate while preserving order
+    seen: set = set()
+    tag_names = [n for n in cleaned_names if not (n in seen or seen.add(n))]  # type: ignore[func-returns-value]
+
+    if not tag_names:
+        return
+
+    # Safe upsert tag using begin_nested() savepoint to prevent transaction rollback
+    for name in tag_names:
+        slug = _re.sub(r'[^a-z0-9]+', '-', name).strip('-')
+        if not slug:
+            slug = name.lower()
+        try:
+            async with session.begin_nested():
+                from sqlalchemy.dialects.postgresql import insert as pg_insert
+                stmt = pg_insert(Tag).values(name=name, slug=slug).on_conflict_do_nothing(index_elements=['name'])
+                await session.execute(stmt)
+        except Exception as e:
+            logger.warning(f"Could not upsert tag '{name}' (slug '{slug}'): {e}")
+
+    # Re-query all valid tags
+    existing_q = await session.execute(_select(Tag).where(Tag.name.in_(tag_names)))
+    assigned = list(existing_q.scalars().all())
+
+    # Async refresh tags relationship before assigning to avoid MissingGreenlet
+    try:
+        await session.refresh(model, ["tags"])
+    except Exception:
+        pass
+    model.tags = assigned
+
+
+async def _fetch_related_images(telegram_client, chat_id: int, base_message) -> list:
+    """
+    Fetch images that belong to the same album or are directly related to base_message.
+
+    Covers 3 patterns:
+      A) File + photos share the same grouped_id (Telegram Media Group / Album)
+      B) Photos posted right before the file as a separate album (Pixel 3D STL style)
+      C) Photos posted as standalone messages adjacent to the file (no grouped_id)
+    """
+    from telethon.tl.types import MessageMediaPhoto
+
+    images: list = []
+    try:
+        grouped_id = base_message.grouped_id
+
+        # ── Fetch messages BEFORE the base message (up to 15 messages older) ──
+        msgs_before = await telegram_client.get_messages(
+            chat_id, limit=15, offset_id=base_message.id
+        )
+        # ── Fetch messages AFTER the base message (min_id trick) ────────────
+        # get_messages with min_id returns messages NEWER than that ID
+        msgs_after = await telegram_client.get_messages(
+            chat_id, limit=15, min_id=base_message.id
+        )
+
+        all_msgs = list(msgs_before or []) + list(msgs_after or [])
+        if not all_msgs:
+            return []
+
+        for msg in all_msgs:
+            if msg.id == base_message.id:
+                continue
+
+            # ── Kiểm tra đây có phải ảnh không ─────────────────────────────
+            is_image = False
+            if isinstance(msg.media, MessageMediaPhoto):
+                is_image = True
+            elif msg.document and msg.document.mime_type and msg.document.mime_type.startswith('image/'):
+                is_image = True
+
+            if not is_image:
+                continue
+
+            if grouped_id:
+                # Pattern A: base_message thuộc album → chỉ lấy ảnh cùng grouped_id
+                if msg.grouped_id == grouped_id:
+                    images.append(msg)
+            else:
+                # Pattern B + C: base_message là file độc lập (không có grouped_id)
+                # Pixel 3D STL: post album ảnh trước rồi file STL sau → ảnh có grouped_id,
+                # file thì không — KHÔNG lọc bỏ msg.grouped_id is not None nữa.
+                id_diff = abs(msg.id - base_message.id)
+                time_diff = abs((msg.date - base_message.date).total_seconds())
+
+                is_reply = (
+                    getattr(msg, 'reply_to_msg_id', None) == base_message.id or
+                    getattr(base_message, 'reply_to_msg_id', None) == msg.id
+                )
+                # Same sender, within ±10 message IDs, within 10 minutes
+                same_sender = msg.sender_id == base_message.sender_id
+
+                if is_reply or (same_sender and id_diff <= 10 and time_diff <= 600):
+                    images.append(msg)
+
+        # Sort by message ID ascending (chronological order)
+        images.sort(key=lambda m: m.id)
+
+    except Exception as e:
+        logger.error(f"Error fetching related images: {e}")
+
+    return images
+
+
+async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> None:
+    """arq task: download and process a Telegram 3D model message.
+
+    Args:
+        ctx: arq worker context dictionary. Must contain 'telegram_client'.
+        message_id: Telegram message ID of the file message.
+        chat_id: Telegram chat/group ID where the message was posted.
+    """
+    settings = get_settings()
+    telegram_client = ctx.get("telegram_client")
+    tmp_file: str | None = None
+    tmp_dir: str | None = None
+
+    async with AsyncSessionLocal() as session:
+        if not telegram_client.is_connected():
+            await telegram_client.connect()
+
+        # ── Fetch Telegram message first to get filename ─────────────────
+        try:
+            tg_message = await telegram_client.get_messages(chat_id, ids=message_id)
+        except ValueError as ve:
+            logger.warning(f"Cannot fetch message {message_id} from {chat_id}: {ve}")
+            return
+
+        if not tg_message or not tg_message.document:
+            logger.error(f"Cannot find valid telegram message {message_id} in {chat_id}")
+            return
+            
+        file_name = "unknown_file"
+        for attribute in tg_message.document.attributes:
+            if hasattr(attribute, 'file_name'):
+                file_name = attribute.file_name
+                break
+
+        # ── Find internal Source Group ID ─────────────────────────────────
+        from app.models.source_group import SourceGroup
+        stmt_sg = select(SourceGroup).where(SourceGroup.chat_id == chat_id)
+        source_group = (await session.execute(stmt_sg)).scalar_one_or_none()
+        internal_sg_id = source_group.id if source_group else None
+
+        # ── Find existing Model3D record ──────────────────────────────────
+        file_id_str = str(tg_message.document.id)
+        file_size = tg_message.document.size
+        stmt = select(Model3D).where(
+            (Model3D.telegram_message_id == message_id) |
+            (Model3D.telegram_file_id == file_id_str) |
+            ((Model3D.original_filename == file_name) & (Model3D.file_size_bytes == file_size))
+        )
+        result = await session.execute(stmt)
+        model = result.scalars().first()
+
+        if model is None:
+            logger.info(f"Creating new Model3D record for message_id={message_id}")
+            model = Model3D(
+                telegram_file_id=None,  # Null cho tới khi upload thành công sang nhóm đích
+                telegram_message_id=message_id,
+                source_group_id=internal_sg_id,
+                original_filename=file_name,
+                file_extension=file_name.split('.')[-1].lower() if '.' in file_name else "",
+                file_size_bytes=file_size,
+                processing_status=ProcessingStatus.processing,
+                processing_retries=1
+            )
+            session.add(model)
+            await session.flush()
+        else:
+            # Nếu model đã completed VÀ đã được upload lên nhóm đích (telegram_file_id is not None) -> Bỏ qua
+            # Nếu model đã completed nhưng CHƯA upload lên nhóm đích (telegram_file_id is None) -> Chạy tiếp để upload
+            from app.services.settings import SettingsService
+            target_chat_str = await SettingsService.get_setting("TELEGRAM_TARGET_CHAT_ID")
+            if not target_chat_str:
+                target_chat_str = settings.TELEGRAM_TARGET_CHAT_ID
+
+            already_uploaded = (model.telegram_file_id is not None)
+            if model.processing_status == ProcessingStatus.completed and already_uploaded:
+                logger.info(f"Model {model.id} ({file_name}) already completed and uploaded to target group. Skipping.")
+                return
+            
+            model.processing_status = ProcessingStatus.processing
+            model.processing_retries = (model.processing_retries or 0) + 1
+            
+        await session.commit()
+
+
+        try:
+            pipeline_start = time.time()
+
+            # ── Step 1: Download temp file from Telegram (10% -> 30%) ───────
+            tmp_dir = os.path.join(settings.TEMP_DIR, str(model.id))
+            os.makedirs(tmp_dir, exist_ok=True)
+            # Run immediate cleanup of any leftover temp files older than 2 minutes
+            _cleanup_orphaned_temp_files(settings.TEMP_DIR, max_age_seconds=120)
+
+            await _add_log(session, model, "Tải file (10%)", f"[10%] Bắt đầu tải file '{model.original_filename}' từ Telegram...")
+
+
+            dl_start = time.time()
+            last_log_time = [0.0]
+            current_loop = asyncio.get_event_loop()
+
+            def dl_progress_callback(downloaded, total):
+                now = time.time()
+                if now - last_log_time[0] >= 2.0 or downloaded == total:
+                    last_log_time[0] = now
+                    elapsed = now - dl_start
+                    pct = int(10 + (downloaded / total) * 20) if total else 10
+                    dl_mb = downloaded / (1024 * 1024)
+                    tot_mb = total / (1024 * 1024)
+                    speed = (dl_mb / elapsed) if elapsed > 0 else 0
+                    eta_sec = int((total - downloaded) / (speed * 1024 * 1024)) if speed > 0 else 0
+                    log_msg = (
+                        f"[{pct}%] Đang tải: {dl_mb:.1f}/{tot_mb:.1f} MB "
+                        f"({int(downloaded/total*100) if total else 0}%) | Tốc độ: {speed:.1f} MB/s | Dự kiến còn lại: ~{eta_sec}s"
+                    )
+                    logger.info(f"[{model.original_filename}] {log_msg}")
+                    try:
+                        if current_loop and current_loop.is_running():
+                            asyncio.run_coroutine_threadsafe(
+                                _add_log_by_id(model.id, f"Tải file ({pct}%)", log_msg),
+                                current_loop
+                            )
+
+                    except Exception:
+                        pass
+
+            async def _flood_wait_status_callback(msg: str):
+                """Forward FloodWait notices to the model's processing_logs."""
+                await _add_log_by_id(model.id, "[Tạm dừng]", msg)
+
+            async with DOWNLOAD_SEMAPHORE:
+                tmp_file = await download_telegram_document(
+                    telegram_client, tg_message, save_dir=tmp_dir,
+                    progress_callback=dl_progress_callback,
+                    status_callback=_flood_wait_status_callback
+                )
+                # Giãn cách nhỏ sau tải xong (Premium: giảm xuống 0.5s)
+                await asyncio.sleep(0.5)
+
+            file_size_mb = (os.path.getsize(tmp_file) / (1024 * 1024)) if os.path.exists(tmp_file) else 0
+            await _add_log(session, model, "Tải file (30%)", f"[30%] Tải thành công file '{model.original_filename}' ({file_size_mb:.1f} MB) trong {time.time()-dl_start:.1f}s", path=tmp_file)
+
+            # ── Step 1.5 & 2: Fast 3D / Archive Inspection (45%) ──────────
+            await _add_log(session, model, "Phân tích nhanh (45%)", f"[45%] Đang quét cấu trúc file '{model.original_filename}'...")
+            mesh_info = inspect_3d_file(tmp_file)
+            model.part_count = mesh_info.part_count
+            model.is_presupported = mesh_info.is_presupported
+            model.face_count = mesh_info.face_count
+            
+            face_display = f"{mesh_info.face_count:,} mặt" if mesh_info.face_count else f"{mesh_info.part_count} part(s)"
+            support_status_str = " (Có Pre-support)" if mesh_info.is_presupported else ""
+            await _add_log(session, model, "Phân tích nhanh (55%)", f"[55%] Quét nhanh hoàn tất: {face_display}{support_status_str}")
+
+            # ── Step 3: Fetch Telegram demo images (75%) ──────────────────
+            await _add_log(session, model, "Album (75%)", "[75%] Đang tìm kiếm ảnh demo đính kèm trong bài viết Telegram...")
+            related_image_messages = await _fetch_related_images(telegram_client, chat_id, tg_message)
+
+            image_paths = []
+            if related_image_messages:
+                await _add_log(session, model, "Album (78%)", f"[78%] Tìm thấy {len(related_image_messages)} ảnh demo. Đang tải album...")
+                for i, img_msg in enumerate(related_image_messages):
+                    try:
+                        ext = '.jpg'
+                        if img_msg.document and img_msg.document.attributes:
+                            for attr in img_msg.document.attributes:
+                                if hasattr(attr, 'file_name') and '.' in attr.file_name:
+                                    ext = '.' + attr.file_name.split('.')[-1]
+                                    break
+
+                        img_filename = f"{model.id}_{i+1}{ext}"
+                        img_path = os.path.join(settings.THUMBNAIL_DIR, img_filename)
+                        await telegram_client.download_media(img_msg, file=img_path)
+                        if os.path.exists(img_path):
+                            image_paths.append(img_filename)
+                    except Exception as e:
+                        logger.error(f"Failed to download related image: {e}")
+
+                model.image_paths = image_paths
+                if image_paths:
+                    model.thumbnail_path = image_paths[0]
+                await _add_log(session, model, "Album (82%)", f"[82%] Tải thành công {len(image_paths)} ảnh demo từ Telegram.")
+            else:
+                await _add_log(session, model, "Album (78%)", "[78%] Không có ảnh demo đính kèm.")
+
+            # ── Step 4: Phân loại / AI Tagging (90%) ──────────────────────
+            message_text = tg_message.text or ""
+            if not message_text and related_image_messages:
+                for img_msg in related_image_messages:
+                    if getattr(img_msg, 'text', None):
+                        message_text = img_msg.text
+                        break
+
+            await _add_log(session, model, "AI Tagger (90%)", "[90%] Gửi dữ liệu cho AI Ollama nhận diện Studio, tên & phân loại...")
+            ai_result = await tag_model(
+                filename=model.original_filename,
+                face_count=mesh_info.face_count,
+                message_text=message_text,
+                is_presupported=mesh_info.is_presupported,
+            )
+            
+            model.predicted_name = ai_result.predicted_name
+            model.studio_name = ai_result.studio
+            model.ai_category = ai_result.category
+            try:
+                model.ai_print_type = PrintType(ai_result.print_type)
+            except ValueError:
+                model.ai_print_type = PrintType.Unknown
+            model.ai_keywords = ai_result.keywords
+            model.ai_raw_response = ai_result.raw_response
+
+            studio_log_str = f" | Studio: {ai_result.studio}" if ai_result.studio else ""
+            await _add_log(session, model, "AI Tagger (93%)", f"[93%] AI hoàn tất: '{ai_result.predicted_name}'{studio_log_str}")
+
+            # ── Inject tên nhóm nguồn vào keywords ───────────────────────
+            group_tag_name: str | None = None
+            if source_group:
+                group_tag_name = source_group.name
+            elif internal_sg_id:
+                from app.models.source_group import SourceGroup as _SG
+                sg_r = await session.execute(select(_SG).where(_SG.id == internal_sg_id))
+                sg_obj = sg_r.scalar_one_or_none()
+                if sg_obj:
+                    group_tag_name = sg_obj.name
+
+            if group_tag_name:
+                existing_kw = model.ai_keywords or ""
+                if isinstance(existing_kw, list):
+                    existing_kw = ", ".join(existing_kw)
+                merged_kw = f"{existing_kw}, {group_tag_name}" if existing_kw.strip() else group_tag_name
+                model.ai_keywords = merged_kw
+
+            # ── Gắn Tag vào DB (upsert) ───────────────────────────────────
+            if model.ai_keywords:
+                kw_str = model.ai_keywords if isinstance(model.ai_keywords, str) else ", ".join(model.ai_keywords)
+                await _assign_tags_to_model(session, model, kw_str)
+
+            # ── Step 5: Persist results to DB (95%) ───────────────────────
+            model.processing_status = ProcessingStatus.completed
+            model.processing_error = None
+            await session.commit()
+            await _add_log(session, model, "Hoàn tất phân tích (95%)", "[95%] Đã lưu kết quả vào CSDL.")
+
+            # ── Step 6: Upload to Target Group (98%) ───────────────────────
+            from app.services.settings import SettingsService
+            target_chat_str = await SettingsService.get_setting("TELEGRAM_TARGET_CHAT_ID")
+            if not target_chat_str:
+                target_chat_str = settings.TELEGRAM_TARGET_CHAT_ID
+                
+            if target_chat_str:
+                try:
+                    target_chat_id = int(target_chat_str.strip())
+                    try:
+                        target_entity = await telegram_client.get_entity(target_chat_id)
+                    except Exception:
+                        await telegram_client.get_dialogs(limit=100)
+                        target_entity = await telegram_client.get_entity(target_chat_id)
+
+                    # Check if tmp_file exists; if missing, re-download
+                    if not tmp_file or not os.path.exists(tmp_file):
+                        tmp_dir = os.path.join(settings.TEMP_DIR, str(model.id))
+                        tmp_file = await download_telegram_document(telegram_client, tg_message, tmp_dir)
+
+                    from telethon.errors import FloodWaitError as UploadFloodWait
+
+                    tag_str = ""
+                    if model.ai_keywords:
+                        raw_kw = model.ai_keywords
+                        kw_list = raw_kw if isinstance(raw_kw, list) else [
+                            k.strip() for k in str(raw_kw).replace(',', ' ').split() if k.strip()
+                        ]
+                        import re as _re
+                        hashtags = [
+                            "#" + _re.sub(r'[^a-zA-Z0-9_\u00C0-\u024F\u1E00-\u1EFF]', '_', k).strip('_')
+                            for k in kw_list if k
+                        ]
+                        tag_str = " ".join(hashtags)
+
+                    source_label = f"📢 **Nguồn:** {source_group.name}\n" if source_group else ""
+                    studio_line = f"🏷️ **Studio:** #{model.studio_name}\n" if model.studio_name else ""
+                    support_badge = "🟢 **[ĐÃ CÓ FILE SUPPORT SẴN]**\n" if model.is_presupported else ""
+                    faces_str = f"{model.face_count:,} tris" if model.face_count else f"{model.part_count or 1} part(s)"
+
+                    # Size display in MB / GB
+                    raw_size = model.file_size_bytes or 0
+                    if raw_size >= 1024 * 1024 * 1024:
+                        size_display = f"{raw_size / (1024 * 1024 * 1024):.2f} GB"
+                    else:
+                        size_display = f"{raw_size / (1024 * 1024):.1f} MB"
+
+                    caption = (
+                        f"**{model.predicted_name or model.original_filename}**\n\n"
+                        f"{studio_line}"
+                        f"{support_badge}"
+                        f"📁 **File:** `{model.original_filename}` ({size_display})\n"
+                        f"📊 **Quy mô:** {faces_str}\n"
+                        f"{source_label}"
+                        f"\n{tag_str}"
+                    )
+                    
+                    image_files = []
+                    if model.image_paths:
+                        for p in model.image_paths:
+                            full_p = os.path.join(settings.THUMBNAIL_DIR, p)
+                            if os.path.exists(full_p):
+                                image_files.append(full_p)
+                                
+                    if image_files:
+                        await _add_log(session, model, "Backup (98%)", f"[98%] Đang upload album ({len(image_files)} ảnh) + file 3D sang nhóm đích...")
+
+                        upload_retries = 3
+                        album_msgs = None
+                        for uattempt in range(1, upload_retries + 1):
+                            try:
+                                album_msgs = await telegram_client.send_file(
+                                    target_entity,
+                                    image_files,
+                                    caption=caption
+                                )
+                                break
+                            except UploadFloodWait as fe:
+                                wait_sec = fe.seconds + 2
+                                logger.warning(f"[FloodWait Upload Album] Chờ {wait_sec}s")
+                                await asyncio.sleep(wait_sec)
+                        
+                        reply_to_msg_id = album_msgs[0].id if (album_msgs and isinstance(album_msgs, list)) else (album_msgs.id if album_msgs else None)
+                        from telethon.tl.types import DocumentAttributeFilename
+
+                        doc_msg = None
+                        for uattempt in range(1, upload_retries + 1):
+                            try:
+                                doc_msg = await telegram_client.send_file(
+                                    target_entity,
+                                    tmp_file,
+                                    reply_to=reply_to_msg_id,
+                                    attributes=[DocumentAttributeFilename(file_name=model.original_filename)]
+                                )
+                                break
+                            except UploadFloodWait as fe:
+                                wait_sec = fe.seconds + 2
+                                logger.warning(f"[FloodWait Upload File] Chờ {wait_sec}s")
+                                await asyncio.sleep(wait_sec)
+
+                        if doc_msg:
+                            model.telegram_target_message_id = doc_msg.id
+                            if doc_msg.document:
+                                model.telegram_file_id = str(doc_msg.document.id)
+                    else:
+                        await _add_log(session, model, "Backup (98%)", f"[98%] Đang upload file 3D kèm mô tả sang nhóm đích...")
+
+                        upload_retries = 3
+                        tg_msg = None
+                        for uattempt in range(1, upload_retries + 1):
+                            try:
+                                tg_msg = await telegram_client.send_file(
+                                    target_entity,
+                                    tmp_file,
+                                    caption=caption
+                                )
+                                break
+                            except UploadFloodWait as fe:
+                                wait_sec = fe.seconds + 2
+                                logger.warning(f"[FloodWait Upload] Chờ {wait_sec}s")
+                                await asyncio.sleep(wait_sec)
+
+                        if tg_msg:
+                            model.telegram_target_message_id = tg_msg.id
+                            if tg_msg.document:
+                                model.telegram_file_id = str(tg_msg.document.id)
+
+                    await session.commit()
+                    await _add_log(session, model, "Backup (99%)", "[99%] Upload thành công lên nhóm đích.")
+                except Exception as upload_exc:
+                    err_msg = f"Upload lên nhóm đích ({target_chat_str}) thất bại: {upload_exc}"
+                    logger.error(f"[{model.id}] {err_msg}", exc_info=True)
+                    model.processing_error = err_msg
+                    await _add_log(session, model, "Backup (Lỗi Upload)", f"[Lỗi Upload] {err_msg}")
+                    await session.commit()
+            else:
+                msg_warn = "[Cảnh báo] TELEGRAM_TARGET_CHAT_ID chưa được cài đặt trong System Settings hoặc .env. Bỏ qua upload lưu trữ."
+                logger.warning(f"[{model.id}] {msg_warn}")
+                await _add_log(session, model, "Backup (Chưa cài ID)", msg_warn)
+
+            total_elapsed = time.time() - pipeline_start
+            await _add_log(session, model, "Hoàn tất (100%)", f"[100%] Hoàn tất 100% xử lý model '{model.original_filename}' trong {total_elapsed:.1f} giây!")
+
+
+        except Exception as exc:
+            model.processing_status = ProcessingStatus.failed
+            model.processing_error = str(exc)
+            await _add_log(session, model, "Lỗi hệ thống", f"Tiến trình thất bại: {exc}")
+            logger.error(f"[{model.id}] Pipeline error: {exc}", exc_info=True)
+            try:
+                await session.commit()
+            except Exception as db_exc:
+                logger.error(f"[{model.id}] DB commit after failure also failed: {db_exc}")
+
+        finally:
+            # ── ALWAYS delete entire tmp_dir (xoá cả file 0-byte orphan) ──
+            import shutil
+            if 'tmp_dir' in locals() and tmp_dir and os.path.exists(tmp_dir):
+                try:
+                    shutil.rmtree(tmp_dir, ignore_errors=True)
+                    logger.info(f"[{model.id}] Đã dọn sạch thư mục tạm: {tmp_dir}")
+                except Exception as e:
+                    logger.warning(f"[{model.id}] Không xóa được tmp_dir {tmp_dir}: {e}")
+
+            # Run a sweep on TEMP_DIR to purge any orphaned leftover temp files
+            _cleanup_orphaned_temp_files(settings.TEMP_DIR)
+
+
+def _cleanup_orphaned_temp_files(temp_dir: str, max_age_seconds: int = 120) -> None:
+    """Sweep and remove any temporary files or directories older than max_age_seconds."""
+
+    import time
+    import shutil
+    if not os.path.exists(temp_dir):
+        return
+
+    now = time.time()
+    for item in os.listdir(temp_dir):
+        item_path = os.path.join(temp_dir, item)
+        try:
+            mtime = os.path.getmtime(item_path)
+            if now - mtime > max_age_seconds:
+                if os.path.isdir(item_path):
+                    shutil.rmtree(item_path, ignore_errors=True)
+                else:
+                    os.unlink(item_path)
+                logger.info(f"Auto-cleaned old temp item: {item_path}")
+        except Exception as e:
+            logger.warning(f"Could not clean temp item {item_path}: {e}")
+
+
+
+async def process_manual_upload(ctx: dict, model_id: str, filepath: str) -> None:
+    """arq task: Process a manually uploaded 3D model."""
+    settings = get_settings()
+    telegram_client = ctx.get("telegram_client")
+    
+    async with AsyncSessionLocal() as session:
+        stmt = select(Model3D).where(Model3D.id == model_id)
+        model = (await session.execute(stmt)).scalar_one_or_none()
+        
+        if not model:
+            logger.error(f"process_manual_upload: Model {model_id} not found in DB")
+            # Cleanup temp file
+            if os.path.exists(filepath):
+                os.unlink(filepath)
+            return
+
+        model.processing_status = ProcessingStatus.processing
+        model.processing_retries = (model.processing_retries or 0) + 1
+        await session.commit()
+        
+        extract_dir = os.path.join(settings.TEMP_DIR, f"ext_{model.id}")
+        
+        try:
+            # 1. Extract if needed
+            await _add_log(session, model, "Xả nén", "Bắt đầu xả nén file thủ công...")
+            extracted_files = await extract_3d_files(filepath, extract_dir)
+            if not extracted_files:
+                raise ValueError("No .stl, .obj, .3mf, .pm7m or .pwscene files found in the archive.")
+                
+            model.part_count = len(extracted_files)
+            target_3d_file = extracted_files[0]
+            await _add_log(session, model, "Xả nén", "Tìm thấy file 3D để phân tích", path=target_3d_file)
+            
+            # 2. Upload to Telegram to get telegram_message_id and file_id
+            # Fetch TELEGRAM_TARGET_CHAT_ID from settings
+            from app.services.settings import SettingsService
+            target_chat_str = await SettingsService.get_setting("TELEGRAM_TARGET_CHAT_ID")
+            if not target_chat_str:
+                target_chat_str = os.environ.get("TELEGRAM_BACKUP_CHAT_ID")
+                
+            if target_chat_str:
+                backup_chat_id = int(target_chat_str.strip())
+            else:
+                chats = settings.chat_ids
+                if not chats:
+                    raise ValueError("No Telegram Target Chat ID configured.")
+                backup_chat_id = chats[0]
+            
+            await _add_log(session, model, "Lưu trữ", f"Đang upload file lên Telegram backup group {backup_chat_id}...")
+            tg_message = await telegram_client.send_file(
+                backup_chat_id, 
+                filepath, 
+                caption=f"Manual Upload: {model.original_filename}"
+            )
+            model.telegram_message_id = tg_message.id
+            model.telegram_file_id = str(tg_message.document.id)
+            await _add_log(session, model, "Lưu trữ", "Upload lên Telegram thành công")
+            
+            # 3. Fast Mesh Inspection
+            await _add_log(session, model, "Đo đạc 3D", "Đang quét nhanh thông số 3D...")
+            mesh_info = inspect_3d_file(filepath)
+            model.part_count = mesh_info.part_count
+            model.is_presupported = mesh_info.is_presupported
+            model.face_count = mesh_info.face_count
+            
+            # 4. Tag with AI
+            await _add_log(session, model, "AI Tagger", "Gửi dữ liệu cho AI phân tích Studio & Category...")
+            ai_result = await tag_model(
+                filename=model.original_filename,
+                face_count=mesh_info.face_count,
+                message_text=f"Manual Upload: {model.original_filename}",
+                is_presupported=mesh_info.is_presupported,
+            )
+            
+            # 5. Update DB
+            model.predicted_name = ai_result.predicted_name
+            model.studio_name = ai_result.studio
+            model.ai_category = ai_result.category
+            try:
+                model.ai_print_type = PrintType(ai_result.print_type)
+            except ValueError:
+                model.ai_print_type = PrintType.Unknown
+            model.ai_keywords = ai_result.keywords
+            model.ai_raw_response = ai_result.raw_response
+
+            model.processing_status = ProcessingStatus.completed
+            model.processing_error = None
+            
+            await _add_log(session, model, "Hoàn tất", "Xử lý file thủ công thành công!")
+
+        except Exception as exc:
+            model.processing_status = ProcessingStatus.failed
+            model.processing_error = str(exc)
+            await _add_log(session, model, "Lỗi hệ thống", f"Tiến trình thất bại: {exc}")
+            logger.error(f"[{model.id}] Manual pipeline error: {exc}", exc_info=True)
+            try:
+                await session.commit()
+            except Exception:
+                pass
+        finally:
+            import shutil
+            if os.path.exists(filepath):
+                try:
+                    os.unlink(filepath)
+                except OSError:
+                    pass
+            if os.path.exists(extract_dir):
+                try:
+                    shutil.rmtree(extract_dir)
+                except OSError:
+                    pass

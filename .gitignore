@@ -1,0 +1,90 @@
+# GitNexus & AI Agent internal directories
+.gitnexus/
+.agents/
+superpowers/
+.claude/
+.gemini/
+
+# Node.js & Frontend build
+node_modules/
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+.npm/
+
+# Python & virtual environments
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Pytest & IDE cache
+.pytest_cache/
+.vscode/
+.idea/
+
+# Environment files & Secrets (CRITICAL)
+.env
+.env.*
+!.env.example
+
+# Backups & Database dumps
+backups/
+backup/
+*.sql
+*.dump
+*.tar.gz
+*.tgz
+*.zip
+*.rar
+*.7z
+
+# Thumbnails, uploads, and temp runtime files
+backend/thumbnails/
+backend/temp/
+thumbnails/
+temp/
+
+# Telegram Session files (CRITICAL — NEVER COMMIT)
+*.session
+*.session-journal
+sessions/
+backend/sessions/
+
+# SSH keys & Private certificates (CRITICAL)
+*.pem
+*.ppk
+*.key
+*.p12
+*.crt
+*.csr
+*.pfx
+
+# Log & Output text files
+*.log
+*.txt
+log/
+logs/
+
+# Local maintenance, migration, test & deploy scripts
+scripts/
+!scripts/deploy.py
+cleanup.py
+update.bash
+check_*.py
+get_*.py
+run_test*.py
+run_seed.py
+test_*.py
+trigger_api.py
+verify.py
+nuke.py
+curl_test.py
+dummy.*
