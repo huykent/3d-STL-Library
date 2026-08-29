@@ -147,9 +147,9 @@ async def list_studios(
 )
 async def list_models(
     search: Optional[str] = Query(None, description="Full-text search in filename, name, message"),
-    detail_level: Optional[DetailLevel] = Query(None),
+    detail_level: Optional[str] = Query(None),
     ai_category: Optional[str] = Query(None),
-    ai_print_type: Optional[PrintType] = Query(None),
+    ai_print_type: Optional[str] = Query(None),
     is_presupported: Optional[bool] = Query(None),
     studio: Optional[str] = Query(None),
     source_group_id: Optional[int] = Query(None),

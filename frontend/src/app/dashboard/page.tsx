@@ -33,11 +33,11 @@ export default function DashboardPage() {
       params.append('page', currentPage.toString());
       params.append('page_size', '50');
       
-      if (currentFilters.search) params.append('search', currentFilters.search);
-      if (currentFilters.detail_level) params.append('detail_level', currentFilters.detail_level);
-      if (currentFilters.ai_category) params.append('ai_category', currentFilters.ai_category);
-      if (currentFilters.ai_print_type) params.append('ai_print_type', currentFilters.ai_print_type);
-      if (currentFilters.studio) params.append('studio', currentFilters.studio);
+      if (currentFilters.search && currentFilters.search !== 'all') params.append('search', currentFilters.search);
+      if (currentFilters.detail_level && currentFilters.detail_level !== 'all') params.append('detail_level', currentFilters.detail_level);
+      if (currentFilters.ai_category && currentFilters.ai_category !== 'all') params.append('ai_category', currentFilters.ai_category);
+      if (currentFilters.ai_print_type && currentFilters.ai_print_type !== 'all') params.append('ai_print_type', currentFilters.ai_print_type);
+      if (currentFilters.studio && currentFilters.studio !== 'all') params.append('studio', currentFilters.studio);
       if (currentFilters.is_presupported === 'true') params.append('is_presupported', 'true');
       if (currentFilters.sort_by) params.append('sort_by', currentFilters.sort_by);
 

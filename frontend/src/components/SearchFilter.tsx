@@ -26,11 +26,11 @@ interface SearchFilterProps {
 export function SearchFilter({ onFilterChange }: SearchFilterProps) {
   const [filters, setFilters] = useState<FilterValues>({
     search: '',
-    detail_level: 'all',
-    ai_category: 'all',
-    ai_print_type: 'all',
-    is_presupported: 'all',
-    studio: 'all',
+    detail_level: '',
+    ai_category: '',
+    ai_print_type: '',
+    is_presupported: '',
+    studio: '',
     sort_by: 'newest',
   });
 
@@ -51,7 +51,7 @@ export function SearchFilter({ onFilterChange }: SearchFilterProps) {
   }, []);
 
   const handleChange = (key: keyof FilterValues, value: string) => {
-    const newVal = value === 'all' ? '' : value;
+    const newVal = (value === 'all' || value === '') ? '' : value;
     const newFilters = { ...filters, [key]: newVal };
     setFilters(newFilters);
     onFilterChange(newFilters);
@@ -78,7 +78,7 @@ export function SearchFilter({ onFilterChange }: SearchFilterProps) {
         {/* Pre-supported Toggle */}
         <button
           onClick={() => {
-            const nextVal = filters.is_presupported === 'true' ? 'all' : 'true';
+            const nextVal = filters.is_presupported === 'true' ? '' : 'true';
             handleChange('is_presupported', nextVal);
           }}
           className={`h-9 px-3 rounded-full text-xs font-medium border flex items-center gap-1.5 transition-all ${

@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from app.models.model3d import DetailLevel, PrintType, ProcessingStatus
 
@@ -86,6 +86,37 @@ class FilterParams(BaseModel):
     sort_by: Optional[str] = "newest"
     page: int = 1
     page_size: int = 24
+
+    @field_validator("detail_level", mode="before")
+    @classmethod
+    def parse_detail_level(cls, v):
+        if not v or v in ("all", "none", "null", "undefined", ""):
+            return None
+        if isinstance(v, DetailLevel):
+            return v
+        try:
+            return DetailLevel(v)
+        except ValueError:
+            return None
+
+    @field_validator("ai_print_type", mode="before")
+    @classmethod
+    def parse_print_type(cls, v):
+        if not v or v in ("all", "none", "null", "undefined", ""):
+            return None
+        if isinstance(v, PrintType):
+            return v
+        try:
+            return PrintType(v)
+        except ValueError:
+            return None
+
+    @field_validator("ai_category", "studio", mode="before")
+    @classmethod
+    def parse_empty_strings(cls, v):
+        if not v or v in ("all", "none", "null", "undefined", ""):
+            return None
+        return v
 
     @property
     def offset(self) -> int:
