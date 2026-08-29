@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { FiDownload, FiTrash2, FiEdit3 } from 'react-icons/fi';
-import { Maximize2, Box } from 'lucide-react';
+import { Maximize2, Box, Images } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -191,6 +191,21 @@ export function ModelCard({ model, onDelete }: ModelCardProps) {
 
         {/* Hover Action Overlay */}
         <div className="absolute top-0 left-0 w-full h-full bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-300 z-10 flex items-center justify-center gap-3 backdrop-blur-[2px]">
+          {/* Image Preview button — only if images exist */}
+          {allImages.length > 0 && (
+            <Button
+              size="icon"
+              onClick={(e) => {
+                e.preventDefault();
+                setLightboxIdx(0);
+              }}
+              className="bg-slate-700 hover:bg-slate-600 text-white rounded-full transition-transform hover:scale-110"
+              title="Xem ảnh"
+            >
+              <Images className="w-4 h-4" />
+            </Button>
+          )}
+
           {/* 3D Preview button — only if completed */}
           {isCompleted && (
             <Button
