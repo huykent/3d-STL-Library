@@ -124,6 +124,7 @@ export default function ActiveQueuePage() {
   const [expandedLogs, setExpandedLogs] = useState<Record<string, boolean>>({});
   const [reprocessing, setReprocessing] = useState(false);
   const [toastMsg, setToastMsg] = useState("");
+  const [confirmAction, setConfirmAction] = useState<null | "recrawl" | "crawl-target">(null);
 
   const fetchStatus = async () => {
     try {
@@ -152,9 +153,11 @@ export default function ActiveQueuePage() {
   };
 
   const handleFullRecrawl = async () => {
-    if (!confirm("Bạn có chắc chắn muốn xoá sạch hàng chờ hiện tại và cào lại lịch sử toàn bộ các nhóm nguồn? (Các file đã có trên nhóm đích sẽ được tự động lọc bỏ)")) {
+    if (confirmAction !== "recrawl") {
+      setConfirmAction("recrawl");
       return;
     }
+    setConfirmAction(null);
     setReprocessing(true);
     try {
       const res = await api.post<{ status: string; message: string; groups_count: number }>("/admin/queue/full-recrawl");
@@ -169,9 +172,11 @@ export default function ActiveQueuePage() {
   };
 
   const handleCrawlTargetGroup = async () => {
-    if (!confirm("Quét nhóm đích để lấy data kho? Các file mới trong nhóm đích sẽ được import vào DB và AI tag.")) {
+    if (confirmAction !== "crawl-target") {
+      setConfirmAction("crawl-target");
       return;
     }
+    setConfirmAction(null);
     setReprocessing(true);
     try {
       const res = await api.post<{ status: string; message: string }>("/admin/queue/crawl-target-group?limit=1000");
@@ -256,6 +261,31 @@ export default function ActiveQueuePage() {
       {toastMsg && (
         <div className="bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 p-4 rounded-xl text-sm font-medium">
           {toastMsg}
+        </div>
+      )}
+
+      {/* Inline confirmation bar */}
+      {confirmAction && (
+        <div className="bg-amber-500/10 border border-amber-500/40 text-amber-200 p-4 rounded-xl text-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <span>
+            {confirmAction === "recrawl"
+              ? "⚠️ Xác nhận: Xoá sạch hàng chờ và cào lại lịch sử toàn bộ nhóm nguồn?"
+              : "⚠️ Xác nhận: Quét nhóm đích và import file mới vào DB?"}
+          </span>
+          <div className="flex gap-2 shrink-0">
+            <button
+              onClick={() => { confirmAction === "recrawl" ? handleFullRecrawl() : handleCrawlTargetGroup(); }}
+              className="bg-amber-500 hover:bg-amber-400 text-black font-bold px-4 py-1.5 rounded-lg text-xs transition-colors"
+            >
+              ✓ Xác nhận
+            </button>
+            <button
+              onClick={() => setConfirmAction(null)}
+              className="bg-white/10 hover:bg-white/20 text-white px-4 py-1.5 rounded-lg text-xs transition-colors"
+            >
+              Hủy
+            </button>
+          </div>
         </div>
       )}
 
