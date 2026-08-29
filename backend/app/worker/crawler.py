@@ -227,3 +227,90 @@ async def manual_crawl_history(ctx: dict, chat_id: int, limit: int = 1) -> None:
             logger.info(f"[MANUAL CRAWL] Finished. Queued {files_queued} files.")
     except Exception as e:
         logger.error(f"[MANUAL CRAWL] Failed for group {chat_id}: {e}")
+
+
+async def crawl_target_group_history(ctx: dict, limit: int = 500) -> None:
+    """
+    Scan the TARGET GROUP for existing 3D files and import them into DB.
+    Useful for recovering warehouse data when DB is empty or after VPS migration.
+    - Files already in DB (by telegram_file_id or filename+size) are skipped.
+    - New files are created as Model3D records and enqueued for process_target_message
+      (which runs AI tagging WITHOUT re-uploading since the file is already in target).
+    """
+    telegram_client = ctx.get("telegram_client")
+    if not telegram_client or not telegram_client.is_connected():
+        logger.warning("[CÀO NHÓM ĐÍCH] Telegram client không kết nối. Bỏ qua.")
+        return
+
+    redis = ctx.get("redis")
+
+    from app.services.settings import SettingsService
+    from app.config import get_settings
+
+    target_chat_id_str = await SettingsService.get_setting(
+        "TELEGRAM_TARGET_CHAT_ID", get_settings().TELEGRAM_TARGET_CHAT_ID
+    )
+    if not target_chat_id_str:
+        logger.error("[CÀO NHÓM ĐÍCH] TELEGRAM_TARGET_CHAT_ID chưa được cài đặt. Hủy.")
+        return
+
+    target_chat_id = int(target_chat_id_str)
+    logger.info(f"[CÀO NHÓM ĐÍCH] 🔍 Bắt đầu quét nhóm đích ID={target_chat_id}, tối đa {limit} tin nhắn mới nhất.")
+
+    queued = 0
+    skipped = 0
+
+    try:
+        async with AsyncSessionLocal() as session:
+            async for message in telegram_client.iter_messages(target_chat_id, limit=limit):
+                if not message.document:
+                    continue
+
+                file_name = "unknown"
+                file_ext = ""
+                for attr in message.document.attributes:
+                    if hasattr(attr, "file_name"):
+                        file_name = attr.file_name
+                        file_ext = file_name.rsplit(".", 1)[-1].lower()
+                        break
+
+                if file_ext not in ["stl", "obj", "3mf", "pm7m", "pwscene", "zip", "rar"]:
+                    continue
+
+                file_id_str = str(message.document.id)
+                file_size = message.document.size
+
+                # Check duplicate: by file_id OR (filename + size)
+                stmt_dup = select(Model3D).where(
+                    (Model3D.telegram_file_id == file_id_str)
+                    | (
+                        (Model3D.original_filename == file_name)
+                        & (Model3D.file_size_bytes == file_size)
+                    )
+                )
+                existing = (await session.execute(stmt_dup)).scalars().first()
+
+                if existing:
+                    if existing.processing_status == ProcessingStatus.completed and existing.telegram_file_id:
+                        skipped += 1
+                        continue
+                    # Already in DB but not completed → skip (let normal retry handle it)
+                    skipped += 1
+                    continue
+
+                # New file — enqueue for target-group import processing
+                await redis.enqueue_job(
+                    "process_target_message",
+                    message_id=message.id,
+                    chat_id=target_chat_id,
+                )
+                queued += 1
+                logger.info(
+                    f"[CÀO NHÓM ĐÍCH] 🚀 Đã enqueue '{file_name}' (msg #{message.id}, {file_size/(1024*1024):.1f} MB)"
+                )
+                await asyncio.sleep(0.5)
+
+    except Exception as e:
+        logger.error(f"[CÀO NHÓM ĐÍCH] Lỗi: {e}", exc_info=True)
+
+    logger.info(f"[CÀO NHÓM ĐÍCH] ✅ Hoàn tất. Đã enqueue {queued} file mới, bỏ qua {skipped} file trùng.")

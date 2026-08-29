@@ -525,15 +525,19 @@ async def reprocess_failed_models_api(
 ):
     """Resets failed models & completed-but-not-uploaded models to pending status and pushes them to Redis queue."""
     from app.worker.queue import get_redis_pool
-    from sqlalchemy import or_
+    from sqlalchemy import or_, and_
     stmt_targets = (
         select(Model3D, SourceGroup.chat_id)
         .outerjoin(SourceGroup, Model3D.source_group_id == SourceGroup.id)
         .where(
             or_(
+                # Failed status — always retry
                 Model3D.processing_status == ProcessingStatus.failed,
-                Model3D.telegram_file_id.is_(None),
-                Model3D.processing_error.isnot(None)
+                # Completed but file never made it to target group
+                and_(
+                    Model3D.processing_status == ProcessingStatus.completed,
+                    Model3D.telegram_file_id.is_(None)
+                ),
             )
         )
     )
@@ -646,3 +650,33 @@ async def full_recrawl_api(
     }
 
 
+@router.post(
+    "/queue/crawl-target-group",
+    summary="Scan target group for existing 3D files and import them into DB (admin only)",
+)
+async def crawl_target_group_api(
+    limit: int = 500,
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(get_current_active_admin),
+):
+    """Queues a crawl_target_group_history job to scan the target Telegram group
+    for existing 3D files that are not yet in the DB and import them with AI tagging."""
+    from app.worker.queue import get_redis_pool
+    from app.services.settings import SettingsService
+    from app.config import get_settings as _get_settings
+
+    target_chat_id_str = await SettingsService.get_setting(
+        "TELEGRAM_TARGET_CHAT_ID", _get_settings().TELEGRAM_TARGET_CHAT_ID
+    )
+    if not target_chat_id_str:
+        raise HTTPException(status_code=400, detail="TELEGRAM_TARGET_CHAT_ID chưa được cấu hình trong System Settings.")
+
+    redis = await get_redis_pool()
+    await redis.enqueue_job("crawl_target_group_history", limit=limit)
+
+    return {
+        "status": "success",
+        "message": f"Đã kích hoạt quét nhóm đích (ID: {target_chat_id_str}), tối đa {limit} tin nhắn gần nhất. Kiểm tra logs để theo dõi tiến trình.",
+        "target_chat_id": target_chat_id_str,
+        "limit": limit,
+    }

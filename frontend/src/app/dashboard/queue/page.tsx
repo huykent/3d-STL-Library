@@ -21,7 +21,8 @@ import {
   FiUploadCloud,
   FiMessageSquare,
   FiZap,
-  FiCode
+  FiCode,
+  FiDatabase
 } from "react-icons/fi";
 
 interface ProcessingLog {
@@ -167,6 +168,23 @@ export default function ActiveQueuePage() {
     }
   };
 
+  const handleCrawlTargetGroup = async () => {
+    if (!confirm("Quét nhóm đích để lấy data kho? Các file mới trong nhóm đích sẽ được import vào DB và AI tag.")) {
+      return;
+    }
+    setReprocessing(true);
+    try {
+      const res = await api.post<{ status: string; message: string }>("/admin/queue/crawl-target-group?limit=1000");
+      setToastMsg(res.data.message);
+      fetchStatus();
+    } catch (err: any) {
+      setError(err.response?.data?.detail || "Failed to crawl target group");
+    } finally {
+      setReprocessing(false);
+      setTimeout(() => setToastMsg(""), 6000);
+    }
+  };
+
   useEffect(() => {
     fetchStatus();
     const interval = setInterval(fetchStatus, 2000);
@@ -219,6 +237,14 @@ export default function ActiveQueuePage() {
           >
             <FiRefreshCw className={`w-4 h-4 ${reprocessing ? "animate-spin" : ""}`} />
             Thử lại file lỗi
+          </Button>
+          <Button
+            onClick={handleCrawlTargetGroup}
+            disabled={reprocessing}
+            className="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-medium flex items-center gap-2 px-4 py-2 rounded-xl shadow-lg shadow-emerald-500/20 text-xs md:text-sm"
+          >
+            <FiDatabase className={`w-4 h-4 ${reprocessing ? "animate-spin" : ""}`} />
+            Rà Nhóm Đích (Lấy Kho)
           </Button>
           <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30 px-3 py-2 flex items-center gap-2 text-xs">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
