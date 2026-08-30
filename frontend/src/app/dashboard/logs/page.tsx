@@ -11,10 +11,31 @@ interface LogMessage {
   logger: string;
 }
 
+const isSqlLog = (msg: string, loggerName?: string) => {
+  if (loggerName && (loggerName.startsWith('sqlalchemy') || loggerName.startsWith('asyncpg'))) {
+    return true;
+  }
+  if (!msg) return false;
+  const upper = msg.trim().toUpperCase();
+  return (
+    upper.startsWith('SELECT ') ||
+    upper.startsWith('UPDATE ') ||
+    upper.startsWith('INSERT ') ||
+    upper.startsWith('DELETE ') ||
+    upper.startsWith('BEGIN') ||
+    upper.startsWith('COMMIT') ||
+    upper.startsWith('ROLLBACK') ||
+    upper.includes('[CACHED SINCE') ||
+    upper.includes('FROM MODELS_3D') ||
+    upper.includes('INTO MODELS_3D')
+  );
+};
+
 export default function SystemLogsPage() {
   const [logs, setLogs] = useState<LogMessage[]>([]);
   const [isPaused, setIsPaused] = useState(false);
   const [autoScroll, setAutoScroll] = useState(true);
+  const [hideSql, setHideSql] = useState(true);
   const logsEndRef = useRef<HTMLDivElement>(null);
   const ws = useRef<WebSocket | null>(null);
   
@@ -75,16 +96,20 @@ export default function SystemLogsPage() {
     };
   }, []);
 
+  const displayedLogs = hideSql
+    ? logs.filter((l) => !isSqlLog(l.message, l.logger))
+    : logs;
+
   useEffect(() => {
     if (autoScroll && logsEndRef.current) {
       logsEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [logs, autoScroll]);
+  }, [displayedLogs, autoScroll]);
 
   const clearLogs = () => setLogs([]);
 
   const downloadLogs = () => {
-    const text = logs.map(l => `[${l.timestamp}] [${l.process}] [${l.level}] ${l.message}`).join('\n');
+    const text = displayedLogs.map(l => `[${l.timestamp}] [${l.process}] [${l.level}] ${l.message}`).join('\n');
     const blob = new Blob([text], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -135,6 +160,15 @@ export default function SystemLogsPage() {
         </div>
 
         <div className="flex space-x-3">
+          <label className="flex items-center space-x-2 text-sm text-gray-300 mr-2 cursor-pointer bg-white/5 hover:bg-white/10 px-3 py-1.5 rounded-lg border border-white/10 transition-colors">
+            <input 
+              type="checkbox" 
+              checked={hideSql} 
+              onChange={(e) => setHideSql(e.target.checked)} 
+              className="rounded bg-black/50 border-gray-600 text-blue-500 focus:ring-blue-500/50 cursor-pointer"
+            />
+            <span className="text-xs font-semibold text-blue-300">Bỏ qua SQL</span>
+          </label>
           <label className="flex items-center space-x-2 text-sm text-gray-300 mr-4 cursor-pointer">
             <input 
               type="checkbox" 
@@ -179,10 +213,10 @@ export default function SystemLogsPage() {
 
         {/* Terminal Body */}
         <div className="flex-1 overflow-auto p-4 space-y-1">
-          {logs.length === 0 ? (
+          {displayedLogs.length === 0 ? (
             <div className="text-gray-500 italic">Waiting for log events...</div>
           ) : (
-            logs.map((log, i) => (
+            displayedLogs.map((log, i) => (
               <div key={i} className="hover:bg-white/5 px-2 py-0.5 rounded flex break-all">
                 <span className="text-gray-600 mr-3 shrink-0">
                   {new Date(log.timestamp).toLocaleTimeString([], { hour12: false, fractionalSecondDigits: 3 })}

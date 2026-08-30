@@ -2,6 +2,8 @@ import logging
 import asyncio
 import json
 from datetime import datetime
+IGNORED_LOGGERS = ("sqlalchemy", "asyncpg", "aiosqlite", "databases")
+
 class RedisPubSubHandler(logging.Handler):
     """
     A custom logging handler that publishes log records to a Redis Pub/Sub channel.
@@ -15,7 +17,22 @@ class RedisPubSubHandler(logging.Handler):
 
     def emit(self, record):
         try:
+            # Skip any internal database/ORM engine logs
+            if record.name and any(record.name.startswith(p) for p in IGNORED_LOGGERS):
+                return
+
             msg = self.format(record)
+            msg_upper = msg.strip().upper()
+
+            # Filter out raw SQL statements and query cache logs
+            if (
+                msg_upper.startswith(("SELECT ", "UPDATE ", "INSERT ", "DELETE ", "BEGIN", "COMMIT", "ROLLBACK"))
+                or "[CACHED SINCE" in msg_upper
+                or "FROM MODELS_3D" in msg_upper
+                or "INTO MODELS_3D" in msg_upper
+            ):
+                return
+
             log_data = {
                 "timestamp": datetime.utcnow().isoformat() + "Z",
                 "level": record.levelname,
@@ -56,6 +73,12 @@ def setup_redis_logging(process_name: str):
 
     logging.getLogger("app").setLevel(logging.INFO)
     
+    # Silence noisy database and internal loggers
+    for noisy in ("sqlalchemy.engine", "sqlalchemy.pool", "sqlalchemy.dialects", "sqlalchemy", "asyncpg"):
+        n_log = logging.getLogger(noisy)
+        n_log.setLevel(logging.WARNING)
+        n_log.propagate = False
+
     # Check if we already added it to prevent duplicates
     for handler in root_logger.handlers:
         if isinstance(handler, RedisPubSubHandler):
