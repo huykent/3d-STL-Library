@@ -776,29 +776,25 @@ async def process_target_message(ctx: dict, message_id: int, chat_id: int) -> No
     """
     arq task: Import a 3D file that already exists in the TARGET GROUP into DB.
 
-    Pipeline:
-      1. Fetch the Telegram message from target group
-      2. Create Model3D record (or find existing)
-      3. Download file temporarily for geometry inspection
-      4. Run Fast Mesh analysis
-      5. Render thumbnail (if STL)
-      6. Run AI tagging
-      7. Save all to DB — telegram_file_id is set from target message (NO re-upload)
-      8. Clean up temp files
+    ⚡ FAST PATH — NO DOWNLOAD:
+      1. Fetch message metadata from Telegram (no file download)
+      2. Create/update Model3D record with telegram_file_id
+      3. Run AI tagging based on filename + caption only
+      4. Mark as completed — geometry data left blank (file is already on Telegram)
+
+    This completes in ~2-5 seconds vs ~hours for large file downloads.
     """
-    settings = get_settings()
     telegram_client = ctx.get("telegram_client")
 
     if not telegram_client or not telegram_client.is_connected():
         logger.error(f"[TARGET IMPORT #{message_id}] Telegram client không kết nối.")
         return
 
-    tmp_dir = None
     model = None
 
     async with AsyncSessionLocal() as session:
         try:
-            # ── Step 1: Fetch message from target group ────────────────────────
+            # ── Step 1: Fetch message metadata (no download) ───────────────────
             tg_msg = await telegram_client.get_messages(chat_id, ids=message_id)
             if not tg_msg or not tg_msg.document:
                 logger.warning(f"[TARGET IMPORT #{message_id}] Không tìm thấy document trong nhóm {chat_id}.")
@@ -815,6 +811,7 @@ async def process_target_message(ctx: dict, message_id: int, chat_id: int) -> No
 
             file_size = tg_msg.document.size
             file_id_str = str(tg_msg.document.id)
+            caption = tg_msg.message or ""
 
             # ── Step 2: Check / create Model3D record ─────────────────────────
             stmt_dup = select(Model3D).where(
@@ -832,6 +829,8 @@ async def process_target_message(ctx: dict, message_id: int, chat_id: int) -> No
                     return
                 model = existing
                 model.processing_status = ProcessingStatus.processing
+                model.telegram_file_id = file_id_str
+                model.telegram_target_message_id = message_id
                 model.processing_retries = (model.processing_retries or 0) + 1
             else:
                 model = Model3D(
@@ -841,6 +840,7 @@ async def process_target_message(ctx: dict, message_id: int, chat_id: int) -> No
                     telegram_message_id=message_id,
                     telegram_target_message_id=message_id,
                     telegram_file_id=file_id_str,
+                    telegram_message_text=caption[:500] if caption else None,
                     processing_status=ProcessingStatus.processing,
                     processing_retries=1,
                 )
@@ -849,73 +849,16 @@ async def process_target_message(ctx: dict, message_id: int, chat_id: int) -> No
             await session.commit()
             await session.refresh(model)
 
-            await _add_log(session, model, "Target Import", f"[5%] Bắt đầu import từ nhóm đích msg #{message_id}.")
+            await _add_log(session, model, "Target Import", f"[10%] ⚡ Fast-import msg #{message_id} — '{file_name}' ({file_size/(1024*1024):.1f} MB)")
 
-            # ── Step 3: Download temporarily for geometry analysis ─────────────
-            tmp_dir = os.path.join(settings.TEMP_DIR, f"tgt_{model.id}")
-            os.makedirs(tmp_dir, exist_ok=True)
+            # ── Step 3: AI Tagging (filename + caption only, no geometry) ─────
+            await _add_log(session, model, "AI Tagger", "[50%] Gửi filename + caption cho AI phân tích...")
 
-            await _add_log(session, model, "Tải file", "[20%] Đang tải file từ nhóm đích để phân tích...")
-            tmp_filepath = os.path.join(tmp_dir, file_name)
-
-            async with DOWNLOAD_SEMAPHORE:
-                await telegram_client.download_media(tg_msg, file=tmp_filepath)
-
-            if not os.path.exists(tmp_filepath) or os.path.getsize(tmp_filepath) == 0:
-                raise ValueError(f"Download file rỗng hoặc thất bại: {tmp_filepath}")
-
-            # ── Step 4: Extract 3D files if archive ───────────────────────────
-            extract_dir = os.path.join(tmp_dir, "extracted")
-            extracted_files = await extract_3d_files(tmp_filepath, extract_dir)
-            target_3d_file = extracted_files[0] if extracted_files else tmp_filepath
-            model.part_count = len(extracted_files) if extracted_files else 1
-
-            await _add_log(session, model, "Xả nén", f"[35%] Tìm thấy {model.part_count} file 3D trong archive.")
-
-            # ── Step 5: Fast Mesh geometry inspection ─────────────────────────
-            await _add_log(session, model, "Đo đạc 3D", "[50%] Đang quét thông số 3D...")
-            from app.services.fast_mesh import inspect_3d_file as _inspect
-            mesh_info = _inspect(tmp_filepath)
-            model.part_count = mesh_info.part_count or model.part_count
-            model.is_presupported = mesh_info.is_presupported
-            model.face_count = mesh_info.face_count
-            if mesh_info.bbox:
-                model.bbox_x_mm, model.bbox_y_mm, model.bbox_z_mm = mesh_info.bbox
-            if mesh_info.vertex_count:
-                model.vertex_count = mesh_info.vertex_count
-
-            if mesh_info.detail_level:
-                try:
-                    from app.models.model3d import DetailLevel
-                    model.detail_level = DetailLevel(mesh_info.detail_level)
-                except ValueError:
-                    pass
-
-            await _add_log(session, model, "Đo đạc 3D", f"[60%] {mesh_info.face_count or 0} faces, {model.part_count} parts, presupported={model.is_presupported}.")
-
-            # ── Step 6: Thumbnail rendering ───────────────────────────────────
-            if file_ext == "stl" and os.path.exists(target_3d_file):
-                try:
-                    from app.services.thumbnail import render_thumbnail
-                    await _add_log(session, model, "Thumbnail", "[70%] Đang render thumbnail...")
-                    thumb_path = os.path.join(settings.THUMBNAIL_DIR, f"{model.id}.png")
-                    await asyncio.get_event_loop().run_in_executor(
-                        None, render_thumbnail, target_3d_file, thumb_path
-                    )
-                    if os.path.exists(thumb_path):
-                        model.thumbnail_url = f"/thumbnails/{model.id}.png"
-                        await _add_log(session, model, "Thumbnail", "[75%] Thumbnail đã render thành công.")
-                except Exception as thumb_exc:
-                    logger.warning(f"[TARGET IMPORT #{message_id}] Thumbnail thất bại: {thumb_exc}")
-
-            # ── Step 7: AI Tagging ────────────────────────────────────────────
-            await _add_log(session, model, "AI Tagger", "[80%] Gửi dữ liệu cho AI phân tích...")
-            caption = tg_msg.message or ""
             ai_result = await tag_model(
                 filename=file_name,
-                face_count=mesh_info.face_count,
+                face_count=None,          # No geometry — not downloaded
                 message_text=caption,
-                is_presupported=mesh_info.is_presupported,
+                is_presupported=None,
             )
 
             model.predicted_name = ai_result.predicted_name
@@ -923,7 +866,7 @@ async def process_target_message(ctx: dict, message_id: int, chat_id: int) -> No
             model.ai_category = ai_result.category
             try:
                 model.ai_print_type = PrintType(ai_result.print_type)
-            except ValueError:
+            except (ValueError, AttributeError):
                 model.ai_print_type = PrintType.Unknown
             model.ai_keywords = ai_result.keywords
             model.ai_raw_response = ai_result.raw_response
@@ -931,12 +874,13 @@ async def process_target_message(ctx: dict, message_id: int, chat_id: int) -> No
             if ai_result.keywords:
                 await _assign_tags_to_model(session, model, ai_result.keywords)
 
-            # ── Step 8: Mark completed ────────────────────────────────────────
+            # ── Step 4: Mark completed ─────────────────────────────────────────
             model.processing_status = ProcessingStatus.completed
             model.processing_error = None
             await session.commit()
-            await _add_log(session, model, "Hoàn tất (100%)", f"[100%] Import từ nhóm đích thành công! '{file_name}'")
-            logger.info(f"[TARGET IMPORT #{message_id}] ✅ Import hoàn tất: '{file_name}'")
+
+            await _add_log(session, model, "Hoàn tất (100%)", f"[100%] ✅ Fast-import hoàn tất! '{file_name}'")
+            logger.info(f"[TARGET IMPORT #{message_id}] ✅ '{file_name}' imported (no-download, AI tagged).")
 
         except Exception as exc:
             if model:
@@ -947,13 +891,4 @@ async def process_target_message(ctx: dict, message_id: int, chat_id: int) -> No
                 except Exception:
                     pass
             logger.error(f"[TARGET IMPORT #{message_id}] ❌ Lỗi: {exc}", exc_info=True)
-
-        finally:
-            import shutil
-            if tmp_dir and os.path.exists(tmp_dir):
-                try:
-                    shutil.rmtree(tmp_dir, ignore_errors=True)
-                except Exception:
-                    pass
-            _cleanup_orphaned_temp_files(settings.TEMP_DIR)
 
