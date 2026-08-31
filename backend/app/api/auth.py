@@ -1,7 +1,8 @@
 """Auth router: POST /login."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from datetime import timedelta
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +17,7 @@ router = APIRouter()
 
 @router.post("/login", response_model=Token, summary="Obtain JWT access token")
 async def login(
+    request: Request,
     credentials: OAuth2PasswordRequestForm = Depends(),
     db: AsyncSession = Depends(get_db),
 ) -> Token:
@@ -41,8 +43,30 @@ async def login(
                 detail="Account is disabled",
             )
 
+        # Check remember_me parameter from form data or query parameters
+        is_remember = False
+        try:
+            form_data = await request.form()
+            remember_val = (
+                form_data.get("remember_me")
+                or form_data.get("remember")
+                or request.query_params.get("remember_me")
+                or request.query_params.get("remember")
+            )
+            if remember_val is not None:
+                is_remember = str(remember_val).strip().lower() in ("true", "1", "yes", "on")
+        except Exception:
+            pass
+
+        # 30 days if remember_me is enabled, otherwise 1 day
+        expires_delta = timedelta(days=30) if is_remember else timedelta(days=1)
+
         role_str = user.role.value if hasattr(user.role, 'value') else str(user.role)
-        token = create_access_token(subject=user.username, role=role_str)
+        token = create_access_token(
+            subject=user.username,
+            role=role_str,
+            expires_delta=expires_delta,
+        )
         return Token(access_token=token)
     except HTTPException:
         raise

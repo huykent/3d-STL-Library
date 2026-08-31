@@ -12,9 +12,9 @@ export const api = axios.create({
 // Request interceptor to automatically attach JWT token if available.
 api.interceptors.request.use(
   (config) => {
-    // We only access localStorage in the browser
+    // We access storage in the browser
     if (typeof window !== 'undefined') {
-      const token = localStorage.getItem('access_token');
+      const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
       if (token) {
         config.headers.Authorization = `Bearer ${token}`;
       }
@@ -34,6 +34,7 @@ api.interceptors.response.use(
       // Clear token and redirect to login if unauthorized
       if (typeof window !== 'undefined') {
         localStorage.removeItem('access_token');
+        sessionStorage.removeItem('access_token');
         // Simple redirect (could also use Next.js router if passed down, 
         // but window.location is safe for global interceptors)
         if (!window.location.pathname.includes('/login')) {

@@ -34,20 +34,28 @@ def get_password_hash(password: str) -> str:
     return hashed.decode("utf-8")
 
 
-def create_access_token(subject: str, role: str) -> str:
+def create_access_token(
+    subject: str,
+    role: str,
+    expires_delta: timedelta | None = None,
+) -> str:
     """Create a signed JWT access token.
 
     Args:
         subject: The username (stored in ``sub`` claim).
         role:    The user role (e.g. ``"admin"`` or ``"viewer"``).
+        expires_delta: Optional custom duration for token expiration.
 
     Returns:
         A signed JWT string.
     """
     settings = get_settings()
-    expire = datetime.now(timezone.utc) + timedelta(
-        minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES
-    )
+    if expires_delta is not None:
+        expire = datetime.now(timezone.utc) + expires_delta
+    else:
+        expire = datetime.now(timezone.utc) + timedelta(
+            minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES
+        )
     payload = {
         "sub": subject,
         "role": role,

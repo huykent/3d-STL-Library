@@ -16,7 +16,7 @@ interface AuthContextType {
   isLoading: boolean;
   token: string | null;
   user: User | null;
-  login: (token: string) => void;
+  login: (token: string, remember?: boolean) => void;
   logout: () => void;
   refreshUser: () => Promise<void>;
 }
@@ -41,7 +41,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const fetchUser = async (authToken?: string) => {
     try {
-      // API interceptor uses localStorage, but if we just logged in we might need a tick
+      // API interceptor uses storage, but if we just logged in we might need a tick
       const userData = await getCurrentUser();
       setUser(userData);
     } catch (error) {
@@ -49,6 +49,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(null);
       setToken(null);
       localStorage.removeItem('access_token');
+      sessionStorage.removeItem('access_token');
     } finally {
       setIsLoading(false);
     }
@@ -56,7 +57,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     setIsMounted(true);
-    const storedToken = localStorage.getItem('access_token');
+    const storedToken = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
     if (storedToken) {
       setToken(storedToken);
       fetchUser();
@@ -65,8 +66,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const login = (newToken: string) => {
-    localStorage.setItem('access_token', newToken);
+  const login = (newToken: string, remember: boolean = true) => {
+    if (remember) {
+      localStorage.setItem('access_token', newToken);
+      sessionStorage.removeItem('access_token');
+    } else {
+      sessionStorage.setItem('access_token', newToken);
+      localStorage.removeItem('access_token');
+    }
     setToken(newToken);
     setIsLoading(true);
     fetchUser(newToken);
@@ -74,6 +81,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = () => {
     localStorage.removeItem('access_token');
+    sessionStorage.removeItem('access_token');
     setToken(null);
     setUser(null);
     window.location.href = '/login';
