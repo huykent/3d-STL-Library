@@ -851,14 +851,33 @@ async def process_target_message(ctx: dict, message_id: int, chat_id: int) -> No
 
             await _add_log(session, model, "Target Import", f"[10%] ⚡ Fast-import msg #{message_id} — '{file_name}' ({file_size/(1024*1024):.1f} MB)")
 
-            # ── Step 3: AI Tagging (filename + caption only, no geometry) ─────
-            await _add_log(session, model, "AI Tagger", "[50%] Gửi filename + caption cho AI phân tích...")
+            # ── Step 3: Fast Remote Header Inspection (< 128KB, ~0.3s) ────────
+            from app.services.fast_mesh import inspect_telegram_document_remote
+            await _add_log(session, model, "Đo đạc 3D từ xa", "[30%] Đọc header từ xa (STL header / ZIP Central Directory, < 128KB)...")
+            mesh_info = await inspect_telegram_document_remote(telegram_client, tg_msg.document, file_name)
+
+            model.face_count = mesh_info.face_count or None
+            model.part_count = mesh_info.part_count
+            model.is_presupported = mesh_info.is_presupported
+
+            log_parts = []
+            if model.face_count:
+                log_parts.append(f"{model.face_count:,} faces")
+            if model.part_count and model.part_count > 1:
+                log_parts.append(f"{model.part_count} parts")
+            if model.is_presupported:
+                log_parts.append("Pre-supported: Có")
+            stats_str = f" ({', '.join(log_parts)})" if log_parts else ""
+            await _add_log(session, model, "Đo đạc 3D từ xa", f"[40%] Đã trích xuất thông số 3D{stats_str} thành công.")
+
+            # ── Step 4: AI Tagging (với đầy đủ thông số 3D từ xa) ─────────────
+            await _add_log(session, model, "AI Tagger", "[60%] Gửi thông số cho AI phân tích...")
 
             ai_result = await tag_model(
                 filename=file_name,
-                face_count=None,          # No geometry — not downloaded
+                face_count=model.face_count,
                 message_text=caption,
-                is_presupported=None,
+                is_presupported=model.is_presupported,
             )
 
             model.predicted_name = ai_result.predicted_name
@@ -874,13 +893,13 @@ async def process_target_message(ctx: dict, message_id: int, chat_id: int) -> No
             if ai_result.keywords:
                 await _assign_tags_to_model(session, model, ai_result.keywords)
 
-            # ── Step 4: Mark completed ─────────────────────────────────────────
+            # ── Step 5: Mark completed ─────────────────────────────────────────
             model.processing_status = ProcessingStatus.completed
             model.processing_error = None
             await session.commit()
 
-            await _add_log(session, model, "Hoàn tất (100%)", f"[100%] ✅ Fast-import hoàn tất! '{file_name}'")
-            logger.info(f"[TARGET IMPORT #{message_id}] ✅ '{file_name}' imported (no-download, AI tagged).")
+            await _add_log(session, model, "Hoàn tất (100%)", f"[100%] ✅ Fast-import hoàn tất! '{file_name}'{stats_str}")
+            logger.info(f"[TARGET IMPORT #{message_id}] ✅ '{file_name}' imported ({stats_str.strip()}).")
 
         except Exception as exc:
             if model:
