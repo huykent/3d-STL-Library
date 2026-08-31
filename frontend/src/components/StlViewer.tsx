@@ -7,9 +7,10 @@ import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 
 interface StlViewerProps {
   modelUrl: string;
+  onSpecsComputed?: (specs: { faces: number; vertices: number; bbox_x: number; bbox_y: number; bbox_z: number }) => void;
 }
 
-export function StlViewer({ modelUrl }: StlViewerProps) {
+export function StlViewer({ modelUrl, onSpecsComputed }: StlViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -114,6 +115,16 @@ export function StlViewer({ modelUrl }: StlViewerProps) {
           vertices,
           dimensions: `${size.x.toFixed(1)} x ${size.y.toFixed(1)} x ${size.z.toFixed(1)} mm`,
         });
+
+        if (onSpecsComputed) {
+          onSpecsComputed({
+            faces: Math.round(faces),
+            vertices,
+            bbox_x: Math.round(size.x * 100) / 100,
+            bbox_y: Math.round(size.y * 100) / 100,
+            bbox_z: Math.round(size.z * 100) / 100,
+          });
+        }
 
         setLoading(false);
       },

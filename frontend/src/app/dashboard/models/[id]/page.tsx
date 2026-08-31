@@ -116,6 +116,35 @@ export default function ModelDetailPage() {
     }
   };
 
+  const handleSpecsComputed = async (specs: { faces: number; vertices: number; bbox_x: number; bbox_y: number; bbox_z: number }) => {
+    if (!model) return;
+    // Only sync if missing dimensions or face count
+    if (model.bbox_x_mm && model.face_count) return;
+
+    try {
+      const response = await api.post(`/models/${params.id}/sync-specs`, {
+        face_count: specs.faces,
+        vertex_count: specs.vertices,
+        bbox_x_mm: specs.bbox_x,
+        bbox_y_mm: specs.bbox_y,
+        bbox_z_mm: specs.bbox_z,
+      });
+
+      if (response.data?.synced) {
+        setModel((prev: any) => prev ? {
+          ...prev,
+          face_count: response.data.face_count,
+          bbox_x_mm: response.data.bbox_x_mm,
+          bbox_y_mm: response.data.bbox_y_mm,
+          bbox_z_mm: response.data.bbox_z_mm,
+          detail_level: response.data.detail_level,
+        } : prev);
+      }
+    } catch (err) {
+      console.warn('Silent client specs sync skipped or failed:', err);
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-900 flex items-center justify-center text-white">
@@ -182,7 +211,7 @@ export default function ModelDetailPage() {
           {/* Left Column: 3D Viewer & Gallery */}
           <div className="lg:col-span-2 flex flex-col gap-6">
             <div className="h-[600px] w-full relative">
-              <ModelViewerWrapper model={model} isArchive={isArchive} />
+              <ModelViewerWrapper model={model} isArchive={isArchive} onSpecsComputed={handleSpecsComputed} />
             </div>
             
             {model.image_urls && model.image_urls.length > 0 && (
@@ -428,7 +457,7 @@ export default function ModelDetailPage() {
 
 // Wrapper to fetch the model blob and pass object URL to StlViewer
 // because three.js loader doesn't send our JWT auth header by default.
-function ModelViewerWrapper({ model, isArchive }: { model: any; isArchive: boolean }) {
+function ModelViewerWrapper({ model, isArchive, onSpecsComputed }: { model: any; isArchive: boolean; onSpecsComputed?: (specs: any) => void }) {
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [error, setError] = useState(false);
 
@@ -499,5 +528,5 @@ function ModelViewerWrapper({ model, isArchive }: { model: any; isArchive: boole
     );
   }
 
-  return <StlViewer modelUrl={blobUrl} />;
+  return <StlViewer modelUrl={blobUrl} onSpecsComputed={onSpecsComputed} />;
 }

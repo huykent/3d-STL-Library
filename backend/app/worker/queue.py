@@ -35,12 +35,12 @@ class WorkerSettings:
     on_shutdown = shutdown
     redis_settings = RedisSettings.from_dsn(get_settings().REDIS_URL)
     
-    # Restrict concurrent jobs to save disk space and pacing
-    max_jobs = 10
+    # Increase concurrent jobs for fast parallel processing
+    max_jobs = 20
     
-    # Increase timeout to 1 hour (3600s) for large file downloads and extraction
-    job_timeout = 3600
+    # Increase timeout to 2 hours (7200s)
+    job_timeout = 7200
     
     cron_jobs = [
-        cron(cron_crawl_history, minute=set(range(0, 60, 2)))  # Every 2 minutes
+        cron(cron_crawl_history, minute=set(range(0, 60, 15)))  # Every 15 minutes
     ]

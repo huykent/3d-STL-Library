@@ -15,7 +15,7 @@ from app.api.deps import get_current_active_user, get_db
 from app.config import get_settings
 from app.models.model3d import DetailLevel, Model3D, PrintType
 from app.models.user import User
-from app.schemas.model3d import FilterParams, Model3DList, Model3DOut
+from app.schemas.model3d import FilterParams, Model3DList, Model3DOut, ModelSpecsSync
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -543,3 +543,59 @@ async def reprocess_single_model(
         "message": f"Enqueued model '{model.original_filename}' (#{model.telegram_message_id}) for reprocessing and target group upload!",
         "model_id": str(model.id)
     }
+
+
+@router.post(
+    "/{model_id}/sync-specs",
+    summary="Synchronize client-side computed 3D geometry specs to DB",
+)
+async def sync_model_specs(
+    model_id: uuid.UUID,
+    specs: ModelSpecsSync,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    result = await db.execute(select(Model3D).where(Model3D.id == model_id))
+    model = result.scalar_one_or_none()
+    if not model:
+        raise HTTPException(status_code=404, detail="Model not found")
+
+    updated = False
+    if specs.face_count is not None and (model.face_count is None or model.face_count == 0):
+        model.face_count = specs.face_count
+        updated = True
+        if specs.face_count < 50000:
+            model.detail_level = DetailLevel.Low
+        elif specs.face_count < 250000:
+            model.detail_level = DetailLevel.Medium
+        else:
+            model.detail_level = DetailLevel.High
+
+    if specs.vertex_count is not None and model.vertex_count is None:
+        model.vertex_count = specs.vertex_count
+        updated = True
+
+    if specs.bbox_x_mm is not None and model.bbox_x_mm is None:
+        model.bbox_x_mm = round(specs.bbox_x_mm, 2)
+        model.bbox_y_mm = round(specs.bbox_y_mm, 2) if specs.bbox_y_mm is not None else None
+        model.bbox_z_mm = round(specs.bbox_z_mm, 2) if specs.bbox_z_mm is not None else None
+        updated = True
+
+    if specs.volume_mm3 is not None and model.volume_mm3 is None:
+        model.volume_mm3 = round(specs.volume_mm3, 2)
+        updated = True
+
+    if updated:
+        await db.commit()
+        await db.refresh(model)
+
+    return {
+        "status": "success",
+        "synced": updated,
+        "face_count": model.face_count,
+        "bbox_x_mm": model.bbox_x_mm,
+        "bbox_y_mm": model.bbox_y_mm,
+        "bbox_z_mm": model.bbox_z_mm,
+        "detail_level": model.detail_level.value if model.detail_level else None,
+    }
+

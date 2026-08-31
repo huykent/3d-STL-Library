@@ -72,6 +72,15 @@ class Model3DList(BaseModel):
     has_next: bool
 
 
+class ModelSpecsSync(BaseModel):
+    face_count: Optional[int] = None
+    vertex_count: Optional[int] = None
+    bbox_x_mm: Optional[float] = None
+    bbox_y_mm: Optional[float] = None
+    bbox_z_mm: Optional[float] = None
+    volume_mm3: Optional[float] = None
+
+
 class FilterParams(BaseModel):
     """Query parameters for GET /models."""
     search: Optional[str] = None

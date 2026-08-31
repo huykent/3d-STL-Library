@@ -262,7 +262,35 @@ async def crawl_target_group_history(ctx: dict, limit: int = 500) -> None:
 
     try:
         async with AsyncSessionLocal() as session:
+            # 1. Bulk-load all existing signatures into memory sets for ultra-fast O(1) duplicate checks
+            res = await session.execute(
+                select(
+                    Model3D.telegram_file_id,
+                    Model3D.telegram_target_message_id,
+                    Model3D.original_filename,
+                    Model3D.file_size_bytes,
+                )
+            )
+            existing_file_ids = set()
+            existing_target_msg_ids = set()
+            existing_signatures = set()
+
+            for row in res.all():
+                if row[0]:
+                    existing_file_ids.add(str(row[0]))
+                if row[1]:
+                    existing_target_msg_ids.add(int(row[1]))
+                if row[2] and row[3]:
+                    existing_signatures.add((str(row[2]), int(row[3])))
+
+            logger.info(
+                f"[CÀO NHÓM ĐÍCH] ⚡ Đã nạp {len(existing_file_ids)} file IDs hiện có vào RAM để đối soát siêu tốc O(1)."
+            )
+
+            # 2. Iterate messages from Telegram at full streaming speed
+            count_scanned = 0
             async for message in telegram_client.iter_messages(target_chat_id, limit=limit):
+                count_scanned += 1
                 if not message.document:
                     continue
 
@@ -280,21 +308,12 @@ async def crawl_target_group_history(ctx: dict, limit: int = 500) -> None:
                 file_id_str = str(message.document.id)
                 file_size = message.document.size
 
-                # Check duplicate: by file_id OR (filename + size)
-                stmt_dup = select(Model3D).where(
-                    (Model3D.telegram_file_id == file_id_str)
-                    | (
-                        (Model3D.original_filename == file_name)
-                        & (Model3D.file_size_bytes == file_size)
-                    )
-                )
-                existing = (await session.execute(stmt_dup)).scalars().first()
-
-                if existing:
-                    if existing.processing_status == ProcessingStatus.completed and existing.telegram_file_id:
-                        skipped += 1
-                        continue
-                    # Already in DB but not completed → skip (let normal retry handle it)
+                # In-memory O(1) instant duplicate check (< 0.0001 ms)
+                if (
+                    message.id in existing_target_msg_ids
+                    or file_id_str in existing_file_ids
+                    or (file_name, file_size) in existing_signatures
+                ):
                     skipped += 1
                     continue
 
@@ -305,12 +324,21 @@ async def crawl_target_group_history(ctx: dict, limit: int = 500) -> None:
                     chat_id=target_chat_id,
                 )
                 queued += 1
-                logger.info(
-                    f"[CÀO NHÓM ĐÍCH] 🚀 Đã enqueue '{file_name}' (msg #{message.id}, {file_size/(1024*1024):.1f} MB)"
-                )
-                await asyncio.sleep(0.5)
+
+                # Mark as seen in memory
+                existing_target_msg_ids.add(message.id)
+                existing_file_ids.add(file_id_str)
+                existing_signatures.add((file_name, file_size))
+
+                if queued % 50 == 0:
+                    logger.info(
+                        f"[CÀO NHÓM ĐÍCH] 🚀 Đã enqueue {queued} file mới (đã rà {count_scanned}/{limit} tin nhắn, bỏ qua {skipped} trùng)..."
+                    )
+                    await asyncio.sleep(0.02)  # Yield to event loop
 
     except Exception as e:
         logger.error(f"[CÀO NHÓM ĐÍCH] Lỗi: {e}", exc_info=True)
 
-    logger.info(f"[CÀO NHÓM ĐÍCH] ✅ Hoàn tất. Đã enqueue {queued} file mới, bỏ qua {skipped} file trùng.")
+    logger.info(
+        f"[CÀO NHÓM ĐÍCH] ✅ Hoàn tất. Đã enqueue {queued} file mới, bỏ qua {skipped} file trùng (trên tổng {count_scanned} tin nhắn)."
+    )
