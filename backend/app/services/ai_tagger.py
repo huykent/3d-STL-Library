@@ -53,9 +53,9 @@ SYSTEM_PROMPT = (
 USER_PROMPT_TEMPLATE = (
     "Phân tích model 3D sau:\n"
     "- Filename: {filename}\n"
-    "- Face count: {face_count:,}\n"
+    "- Face count: {face_str}\n"
     "- Pre-supported: {is_presupported}\n"
-    "- Bounding box: {bbox_x:.1f}mm × {bbox_y:.1f}mm × {bbox_z:.1f}mm\n"
+    "- Bounding box: {bbox_str}\n"
     "- Nội dung tin nhắn gốc: {message_text}\n\n"
     "Chỉ trả về JSON object."
 )
@@ -75,8 +75,8 @@ class AITagResult:
 
 async def tag_model(
     filename: str,
-    face_count: int = 0,
-    bbox: tuple[float, float, float] = (0.0, 0.0, 0.0),
+    face_count: Optional[int] = None,
+    bbox: Optional[tuple[Optional[float], Optional[float], Optional[float]]] = None,
     message_text: str = "",
     is_presupported: bool = False,
 ) -> AITagResult:
@@ -89,16 +89,22 @@ async def tag_model(
     ollama_base_url = await SettingsService.get_setting("OLLAMA_BASE_URL", env_settings.OLLAMA_BASE_URL)
     ollama_model = await SettingsService.get_setting("OLLAMA_MODEL", env_settings.OLLAMA_MODEL)
 
-    bbox_x, bbox_y, bbox_z = bbox
+    bx, by, bz = (0.0, 0.0, 0.0)
+    if bbox:
+        bx = float(bbox[0] or 0.0)
+        by = float(bbox[1] or 0.0)
+        bz = float(bbox[2] or 0.0)
+
+    face_val = int(face_count or 0)
+    face_str = f"{face_val:,} faces" if face_val > 0 else "Không rõ (Tập tin Archive/Nén)"
+    bbox_str = f"{bx:.1f}mm × {by:.1f}mm × {bz:.1f}mm" if (bx > 0 or by > 0) else "Chưa đo đạc"
 
     user_prompt = USER_PROMPT_TEMPLATE.format(
         filename=filename,
-        face_count=face_count,
+        face_str=face_str,
         is_presupported="Có" if is_presupported else "Không",
-        bbox_x=bbox_x,
-        bbox_y=bbox_y,
-        bbox_z=bbox_z,
-        message_text=message_text,
+        bbox_str=bbox_str,
+        message_text=message_text or "Không có",
     )
 
     payload = {
