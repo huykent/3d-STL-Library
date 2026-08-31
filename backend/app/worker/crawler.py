@@ -26,8 +26,11 @@ async def cron_crawl_history(ctx: dict) -> None:
         logger.info("Auto-history crawling disabled (CRAWL_HISTORY_DAYS <= 0).")
         return  # Auto-history crawling is disabled if 0 or not set
 
-    history_days = int(history_days_str)
-    target_date = datetime.now(timezone.utc) - timedelta(days=history_days)
+    try:
+        history_days = min(max(1, int(history_days_str)), 3650)
+        target_date = datetime.now(timezone.utc) - timedelta(days=history_days)
+    except Exception:
+        target_date = datetime.now(timezone.utc) - timedelta(days=365)
 
     redis = ctx.get("redis")
     
