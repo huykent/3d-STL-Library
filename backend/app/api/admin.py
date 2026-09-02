@@ -347,10 +347,6 @@ async def get_queue_status_api(
     from datetime import datetime
     from sqlalchemy import func
 
-    # Auto-sync TELEGRAM_CHAT_IDS to source_groups DB table
-    from app.services.source_group_sync import sync_source_groups_from_settings
-    await sync_source_groups_from_settings(session=db)
-
     # Target chat ID setting
     target_chat_str = await SettingsService.get_setting("TELEGRAM_TARGET_CHAT_ID")
     if not target_chat_str:
@@ -362,6 +358,7 @@ async def get_queue_status_api(
         .outerjoin(SourceGroup, Model3D.source_group_id == SourceGroup.id)
         .where(Model3D.processing_status == ProcessingStatus.processing)
         .order_by(Model3D.updated_at.desc())
+        .limit(15)
     )
     res_active = await db.execute(stmt_active)
     active_rows = res_active.all()
@@ -386,7 +383,7 @@ async def get_queue_status_api(
             "current_step": step,
             "current_message": msg,
             "updated_at": model.updated_at.isoformat() if model.updated_at else None,
-            "logs": logs
+            "logs": logs[-8:]  # Chỉ gửi 8 log gần nhất để siêu nhẹ bộ nhớ trình duyệt & điện thoại
         }
         active_jobs.append(job_data)
 
@@ -401,7 +398,7 @@ async def get_queue_status_api(
         .outerjoin(SourceGroup, Model3D.source_group_id == SourceGroup.id)
         .where(Model3D.processing_status == ProcessingStatus.pending)
         .order_by(Model3D.created_at.asc())
-        .limit(20)
+        .limit(10)
     )
     res_queued = await db.execute(stmt_queued)
     queued_rows = res_queued.all()
@@ -417,18 +414,21 @@ async def get_queue_status_api(
             "created_at": model.created_at.isoformat() if model.created_at else None,
         })
 
-    # Source groups info for Crawl panel
+    # Source groups info for Crawl panel (1 single grouped query thay vì N+1 query)
     stmt_groups = select(SourceGroup).order_by(SourceGroup.id)
     source_groups = (await db.execute(stmt_groups)).scalars().all()
+    
+    stmt_counts = select(Model3D.source_group_id, func.count(Model3D.id)).group_by(Model3D.source_group_id)
+    counts_res = (await db.execute(stmt_counts)).all()
+    counts_map = {row[0]: row[1] for row in counts_res if row[0] is not None}
+
     groups_list = []
     for g in source_groups:
-        stmt_mc = select(func.count(Model3D.id)).where(Model3D.source_group_id == g.id)
-        real_mcount = (await db.execute(stmt_mc)).scalar() or 0
         groups_list.append({
             "id": g.id,
             "chat_id": g.chat_id,
             "name": g.name,
-            "model_count": real_mcount,
+            "model_count": counts_map.get(g.id, 0),
             "is_active": g.is_active,
             "last_message_id": g.last_message_id
         })
@@ -600,13 +600,13 @@ async def reprocess_failed_models_api(
 
 @router.post(
     "/queue/clear",
-    summary="Clear all pending jobs in Redis queue and delete pending model records (admin only)",
+    summary="Clear all pending jobs in Redis queue (admin only)",
 )
 async def clear_queue_api(
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(get_current_active_admin),
 ):
-    """Flushes Redis queue jobs and deletes pending models from DB."""
+    """Flushes Redis queue jobs without deleting models from the database library."""
     from app.worker.queue import get_redis_pool
     redis = await get_redis_pool()
 
@@ -615,19 +615,18 @@ async def clear_queue_api(
     except Exception as e:
         logger.warning(f"Could not flush redis db: {e}")
 
-    stmt_pending = select(Model3D).where(Model3D.processing_status == ProcessingStatus.pending)
-    res = await db.execute(stmt_pending)
-    pending_models = res.scalars().all()
-
-    deleted_count = len(pending_models)
-    for m in pending_models:
-        await db.delete(m)
-
+    # Đưa các model bị kẹt 'processing' về 'pending' an toàn, KHÔNG XÓA MODEL KHỎI CSDL
+    stmt_stuck = select(Model3D).where(Model3D.processing_status == ProcessingStatus.processing)
+    res = await db.execute(stmt_stuck)
+    stuck_models = res.scalars().all()
+    for m in stuck_models:
+        m.processing_status = ProcessingStatus.pending
     await db.commit()
+
     return {
         "status": "success",
-        "message": f"Đã xoá sạch hàng chờ Redis và xoá {deleted_count} model đang chờ.",
-        "deleted_count": deleted_count
+        "message": "Đã làm trống hàng chờ Redis. Toàn bộ mô hình trên Dashboard vẫn được bảo toàn nguyên vẹn!",
+        "deleted_count": 0
     }
 
 
@@ -639,7 +638,7 @@ async def full_recrawl_api(
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(get_current_active_admin),
 ):
-    """Clears queue, resets group crawl checkpoints, and enqueues history crawl job."""
+    """Clears queue, resets group crawl checkpoints, and enqueues history crawl job without deleting library models."""
     from app.worker.queue import get_redis_pool
     from app.models.source_group import SourceGroup
     from app.services.source_group_sync import sync_source_groups_from_settings
@@ -647,21 +646,15 @@ async def full_recrawl_api(
     # 1. Sync source groups from settings
     await sync_source_groups_from_settings(session=db)
 
-    # 2. Reset crawl checkpoint for all source groups
+    # 2. Reset crawl checkpoint for all active source groups
     stmt_groups = select(SourceGroup).where(SourceGroup.is_active == True)
     groups = (await db.execute(stmt_groups)).scalars().all()
     for g in groups:
         g.oldest_message_id = 0
 
-    # 3. Delete pending models
-    stmt_pending = select(Model3D).where(Model3D.processing_status == ProcessingStatus.pending)
-    pending_models = (await db.execute(stmt_pending)).scalars().all()
-    for m in pending_models:
-        await db.delete(m)
-
     await db.commit()
 
-    # 4. Flush Redis & trigger history crawl job
+    # 3. Flush Redis & trigger history crawl job
     redis = await get_redis_pool()
     try:
         await redis.flushdb()
@@ -672,7 +665,7 @@ async def full_recrawl_api(
 
     return {
         "status": "success",
-        "message": f"Đã xoá hàng chờ và kích hoạt cào lại lịch sử cho {len(groups)} nhóm nguồn. Các file chưa có trên nhóm đích sẽ được tự động cào về!",
+        "message": f"Đã kích hoạt cào lại lịch sử cho {len(groups)} nhóm nguồn. Các mô hình hiện có trên Dashboard được giữ nguyên vẹn!",
         "groups_count": len(groups)
     }
 
