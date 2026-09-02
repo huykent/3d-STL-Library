@@ -354,6 +354,8 @@ export function ModelCard({ model, onDelete }: ModelCardProps) {
         <ModelPreviewModal
           modelId={model.id}
           modelName={displayName}
+          fileExtension={model.file_extension}
+          filename={model.original_filename}
           onClose={() => setShow3D(false)}
         />
       )}

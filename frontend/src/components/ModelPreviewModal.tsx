@@ -21,10 +21,12 @@ const StlViewer = dynamic(
 interface ModelPreviewModalProps {
   modelId: string;
   modelName: string;
+  fileExtension?: string;
+  filename?: string;
   onClose: () => void;
 }
 
-export function ModelPreviewModal({ modelId, modelName, onClose }: ModelPreviewModalProps) {
+export function ModelPreviewModal({ modelId, modelName, fileExtension, filename, onClose }: ModelPreviewModalProps) {
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -112,7 +114,7 @@ export function ModelPreviewModal({ modelId, modelName, onClose }: ModelPreviewM
             </div>
           )}
           {blobUrl && !error && (
-            <StlViewer modelUrl={blobUrl} />
+            <StlViewer modelUrl={blobUrl} fileExtension={fileExtension} filename={filename} />
           )}
         </div>
       </div>

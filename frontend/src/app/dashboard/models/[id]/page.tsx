@@ -528,5 +528,5 @@ function ModelViewerWrapper({ model, isArchive, onSpecsComputed }: { model: any;
     );
   }
 
-  return <StlViewer modelUrl={blobUrl} onSpecsComputed={onSpecsComputed} />;
+  return <StlViewer modelUrl={blobUrl} fileExtension={model.file_extension} filename={model.original_filename} onSpecsComputed={onSpecsComputed} />;
 }

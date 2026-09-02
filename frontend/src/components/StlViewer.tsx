@@ -4,13 +4,17 @@ import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
+import { ThreeMFLoader } from 'three/examples/jsm/loaders/3MFLoader.js';
+import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 
 interface StlViewerProps {
   modelUrl: string;
+  fileExtension?: string;
+  filename?: string;
   onSpecsComputed?: (specs: { faces: number; vertices: number; bbox_x: number; bbox_y: number; bbox_z: number }) => void;
 }
 
-export function StlViewer({ modelUrl, onSpecsComputed }: StlViewerProps) {
+export function StlViewer({ modelUrl, fileExtension, filename, onSpecsComputed }: StlViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -21,6 +25,7 @@ export function StlViewer({ modelUrl, onSpecsComputed }: StlViewerProps) {
     if (!container || !modelUrl) return;
 
     let animationFrameId: number;
+    let isCancelled = false;
     setLoading(true);
     setError(null);
 
@@ -52,7 +57,7 @@ export function StlViewer({ modelUrl, onSpecsComputed }: StlViewerProps) {
     controls.autoRotateSpeed = 2.0;
 
     // 5. Lighting
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.9);
+    const ambientLight = new THREE.AmbientLight(0xffffff, 1.0);
     scene.add(ambientLight);
 
     const dirLight1 = new THREE.DirectionalLight(0xffffff, 1.4);
@@ -69,72 +74,266 @@ export function StlViewer({ modelUrl, onSpecsComputed }: StlViewerProps) {
     grid.position.y = 0;
     scene.add(grid);
 
-    // 6. Load STL Model
-    let mesh: THREE.Mesh | null = null;
-    const loader = new STLLoader();
+    let loadedObject: THREE.Object3D | null = null;
 
-    loader.load(
-      modelUrl,
-      (geometry) => {
-        geometry.computeVertexNormals();
-        geometry.computeBoundingBox();
-
-        const bbox = geometry.boundingBox!;
-        const center = new THREE.Vector3();
-        bbox.getCenter(center);
-
-        // Center X and Z, put Y base on the grid floor (y = 0)
-        const size = new THREE.Vector3();
-        bbox.getSize(size);
-        geometry.translate(-center.x, -bbox.min.y, -center.z);
-
-        // Position camera to frame the model nicely
-        const maxDim = Math.max(size.x, size.y, size.z) || 10;
-        camera.position.set(maxDim * 1.5, maxDim * 1.3, maxDim * 1.8);
-        camera.lookAt(0, size.y / 2, 0);
-        controls.target.set(0, size.y / 2, 0);
-        controls.update();
-
-        // Model Material: Sleek metallic resin style
-        const material = new THREE.MeshStandardMaterial({
-          color: 0x818cf8,
-          roughness: 0.35,
-          metalness: 0.25,
-        });
-
-        mesh = new THREE.Mesh(geometry, material);
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
-        scene.add(mesh);
-
-        // Calculate statistics
-        const faces = geometry.attributes.position ? geometry.attributes.position.count / 3 : 0;
-        const vertices = geometry.attributes.position ? geometry.attributes.position.count : 0;
-        setStats({
-          faces: Math.round(faces),
-          vertices,
-          dimensions: `${size.x.toFixed(1)} x ${size.y.toFixed(1)} x ${size.z.toFixed(1)} mm`,
-        });
-
-        if (onSpecsComputed) {
-          onSpecsComputed({
-            faces: Math.round(faces),
-            vertices,
-            bbox_x: Math.round(size.x * 100) / 100,
-            bbox_y: Math.round(size.y * 100) / 100,
-            bbox_z: Math.round(size.z * 100) / 100,
-          });
+    // 6. Load Model based on format
+    const loadModel = async () => {
+      try {
+        let ext = (fileExtension || '').toLowerCase().replace('.', '').trim();
+        if (!ext && filename) {
+          const parts = filename.split('.');
+          if (parts.length > 1) ext = parts.pop()!.toLowerCase().trim();
         }
 
-        setLoading(false);
-      },
-      undefined,
-      (err) => {
-        console.error('Error loading STL in Three.js:', err);
-        setError('Không thể tải hoặc hiển thị file STL này.');
+        // Check magic bytes if format is uncertain
+        let isZip = false;
+        try {
+          const probe = await fetch(modelUrl);
+          const blobData = await probe.blob();
+          const headBuf = await blobData.slice(0, 4).arrayBuffer();
+          const bytes = new Uint8Array(headBuf);
+          if (bytes[0] === 0x50 && bytes[1] === 0x4B && bytes[2] === 0x03 && bytes[3] === 0x04) {
+            isZip = true;
+          }
+        } catch {
+          // Probe fallback
+        }
+
+        if (isCancelled) return;
+
+        if (ext === '3mf' || isZip) {
+          const loader = new ThreeMFLoader();
+          loader.load(
+            modelUrl,
+            (group) => {
+              if (isCancelled) return;
+              // 3MF files are Z-up; convert to Y-up
+              group.rotation.set(-Math.PI / 2, 0, 0);
+              group.updateMatrixWorld(true);
+
+              let totalFaces = 0;
+              let totalVertices = 0;
+
+              group.traverse((child) => {
+                if ((child as THREE.Mesh).isMesh) {
+                  const m = child as THREE.Mesh;
+                  m.castShadow = true;
+                  m.receiveShadow = true;
+
+                  if (!m.material) {
+                    m.material = new THREE.MeshStandardMaterial({
+                      color: 0x818cf8,
+                      roughness: 0.35,
+                      metalness: 0.25,
+                    });
+                  } else if (Array.isArray(m.material)) {
+                    m.material.forEach((mat) => {
+                      if (mat instanceof THREE.MeshStandardMaterial || mat instanceof THREE.MeshPhongMaterial) {
+                        mat.roughness = mat.roughness ?? 0.35;
+                        mat.metalness = mat.metalness ?? 0.25;
+                      }
+                    });
+                  } else if (m.material instanceof THREE.MeshStandardMaterial || m.material instanceof THREE.MeshPhongMaterial) {
+                    m.material.roughness = m.material.roughness ?? 0.35;
+                    m.material.metalness = m.material.metalness ?? 0.25;
+                  }
+
+                  if (m.geometry) {
+                    m.geometry.computeVertexNormals();
+                    const pos = m.geometry.attributes.position;
+                    if (pos) {
+                      totalVertices += pos.count;
+                      totalFaces += pos.count / 3;
+                    }
+                  }
+                }
+              });
+
+              // Bounding box & centering
+              const bbox = new THREE.Box3().setFromObject(group);
+              const center = new THREE.Vector3();
+              bbox.getCenter(center);
+              const size = new THREE.Vector3();
+              bbox.getSize(size);
+
+              group.position.x -= center.x;
+              group.position.y -= bbox.min.y;
+              group.position.z -= center.z;
+
+              const maxDim = Math.max(size.x, size.y, size.z) || 10;
+              camera.position.set(maxDim * 1.5, maxDim * 1.3, maxDim * 1.8);
+              camera.lookAt(0, size.y / 2, 0);
+              controls.target.set(0, size.y / 2, 0);
+              controls.update();
+
+              loadedObject = group;
+              scene.add(group);
+
+              setStats({
+                faces: Math.round(totalFaces),
+                vertices: totalVertices,
+                dimensions: `${size.x.toFixed(1)} x ${size.y.toFixed(1)} x ${size.z.toFixed(1)} mm`,
+              });
+
+              if (onSpecsComputed) {
+                onSpecsComputed({
+                  faces: Math.round(totalFaces),
+                  vertices: totalVertices,
+                  bbox_x: Math.round(size.x * 100) / 100,
+                  bbox_y: Math.round(size.y * 100) / 100,
+                  bbox_z: Math.round(size.z * 100) / 100,
+                });
+              }
+
+              setLoading(false);
+            },
+            undefined,
+            (err) => {
+              console.error('Error loading 3MF model:', err);
+              setError('Không thể tải hoặc hiển thị file 3MF này.');
+              setLoading(false);
+            }
+          );
+        } else if (ext === 'obj') {
+          const loader = new OBJLoader();
+          loader.load(
+            modelUrl,
+            (group) => {
+              if (isCancelled) return;
+              let totalFaces = 0;
+              let totalVertices = 0;
+
+              group.traverse((child) => {
+                if ((child as THREE.Mesh).isMesh) {
+                  const m = child as THREE.Mesh;
+                  m.castShadow = true;
+                  m.receiveShadow = true;
+
+                  if (!m.material) {
+                    m.material = new THREE.MeshStandardMaterial({
+                      color: 0x818cf8,
+                      roughness: 0.35,
+                      metalness: 0.25,
+                    });
+                  }
+
+                  if (m.geometry) {
+                    m.geometry.computeVertexNormals();
+                    const pos = m.geometry.attributes.position;
+                    if (pos) {
+                      totalVertices += pos.count;
+                      totalFaces += pos.count / 3;
+                    }
+                  }
+                }
+              });
+
+              const bbox = new THREE.Box3().setFromObject(group);
+              const center = new THREE.Vector3();
+              bbox.getCenter(center);
+              const size = new THREE.Vector3();
+              bbox.getSize(size);
+
+              group.position.x -= center.x;
+              group.position.y -= bbox.min.y;
+              group.position.z -= center.z;
+
+              const maxDim = Math.max(size.x, size.y, size.z) || 10;
+              camera.position.set(maxDim * 1.5, maxDim * 1.3, maxDim * 1.8);
+              camera.lookAt(0, size.y / 2, 0);
+              controls.target.set(0, size.y / 2, 0);
+              controls.update();
+
+              loadedObject = group;
+              scene.add(group);
+
+              setStats({
+                faces: Math.round(totalFaces),
+                vertices: totalVertices,
+                dimensions: `${size.x.toFixed(1)} x ${size.y.toFixed(1)} x ${size.z.toFixed(1)} mm`,
+              });
+
+              setLoading(false);
+            },
+            undefined,
+            (err) => {
+              console.error('Error loading OBJ model:', err);
+              setError('Không thể tải hoặc hiển thị file OBJ này.');
+              setLoading(false);
+            }
+          );
+        } else {
+          // Default: STLLoader
+          const loader = new STLLoader();
+          loader.load(
+            modelUrl,
+            (geometry) => {
+              if (isCancelled) return;
+              geometry.computeVertexNormals();
+              geometry.computeBoundingBox();
+
+              const bbox = geometry.boundingBox!;
+              const center = new THREE.Vector3();
+              bbox.getCenter(center);
+
+              const size = new THREE.Vector3();
+              bbox.getSize(size);
+              geometry.translate(-center.x, -bbox.min.y, -center.z);
+
+              const maxDim = Math.max(size.x, size.y, size.z) || 10;
+              camera.position.set(maxDim * 1.5, maxDim * 1.3, maxDim * 1.8);
+              camera.lookAt(0, size.y / 2, 0);
+              controls.target.set(0, size.y / 2, 0);
+              controls.update();
+
+              const material = new THREE.MeshStandardMaterial({
+                color: 0x818cf8,
+                roughness: 0.35,
+                metalness: 0.25,
+              });
+
+              const mesh = new THREE.Mesh(geometry, material);
+              mesh.castShadow = true;
+              mesh.receiveShadow = true;
+              loadedObject = mesh;
+              scene.add(mesh);
+
+              const faces = geometry.attributes.position ? geometry.attributes.position.count / 3 : 0;
+              const vertices = geometry.attributes.position ? geometry.attributes.position.count : 0;
+              setStats({
+                faces: Math.round(faces),
+                vertices,
+                dimensions: `${size.x.toFixed(1)} x ${size.y.toFixed(1)} x ${size.z.toFixed(1)} mm`,
+              });
+
+              if (onSpecsComputed) {
+                onSpecsComputed({
+                  faces: Math.round(faces),
+                  vertices,
+                  bbox_x: Math.round(size.x * 100) / 100,
+                  bbox_y: Math.round(size.y * 100) / 100,
+                  bbox_z: Math.round(size.z * 100) / 100,
+                });
+              }
+
+              setLoading(false);
+            },
+            undefined,
+            (err) => {
+              console.error('Error loading STL in Three.js:', err);
+              setError('Không thể tải hoặc hiển thị file 3D này.');
+              setLoading(false);
+            }
+          );
+        }
+      } catch (e) {
+        console.error('Error in loadModel:', e);
+        setError('Lỗi khởi tạo xem mô hình 3D.');
         setLoading(false);
       }
-    );
+    };
+
+    loadModel();
 
     // 7. Animation loop
     const animate = () => {
@@ -157,19 +356,31 @@ export function StlViewer({ modelUrl, onSpecsComputed }: StlViewerProps) {
 
     // Cleanup
     return () => {
+      isCancelled = true;
       window.removeEventListener('resize', handleResize);
       cancelAnimationFrame(animationFrameId);
       controls.dispose();
       renderer.dispose();
-      if (mesh) {
-        mesh.geometry.dispose();
-        (mesh.material as THREE.Material).dispose();
+      if (loadedObject) {
+        loadedObject.traverse((child) => {
+          if ((child as THREE.Mesh).isMesh) {
+            const m = child as THREE.Mesh;
+            if (m.geometry) m.geometry.dispose();
+            if (m.material) {
+              if (Array.isArray(m.material)) {
+                m.material.forEach((mat) => mat.dispose());
+              } else {
+                m.material.dispose();
+              }
+            }
+          }
+        });
       }
       if (container.contains(renderer.domElement)) {
         container.removeChild(renderer.domElement);
       }
     };
-  }, [modelUrl]);
+  }, [modelUrl, fileExtension, filename]);
 
   return (
     <div className="w-full h-full min-h-[550px] bg-[#0a0e1a] rounded-xl overflow-hidden border border-white/10 relative group">
@@ -201,3 +412,4 @@ export function StlViewer({ modelUrl, onSpecsComputed }: StlViewerProps) {
     </div>
   );
 }
+
