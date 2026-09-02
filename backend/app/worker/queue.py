@@ -30,7 +30,14 @@ from app.worker.crawler import cron_crawl_history, manual_crawl_history, crawl_t
 from arq import cron
 
 class WorkerSettings:
-    functions = [process_telegram_message, process_manual_upload, manual_crawl_history, process_target_message, crawl_target_group_history]
+    functions = [
+        process_telegram_message,
+        process_manual_upload,
+        manual_crawl_history,
+        process_target_message,
+        crawl_target_group_history,
+        cron_crawl_history,
+    ]
     on_startup = startup
     on_shutdown = shutdown
     redis_settings = RedisSettings.from_dsn(get_settings().REDIS_URL)
