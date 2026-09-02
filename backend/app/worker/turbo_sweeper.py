@@ -219,8 +219,8 @@ async def run_turbo_sweeper():
                     f"-> Đích Msg #{target_msg_id} (Gốc #{doc_msg.id})"
                 )
 
-                # Pacing an toàn giữa các mô hình
-                await asyncio.sleep(1.0)
+                # Pacing an toàn chống FloodWait giữa các mô hình (2.5s)
+                await asyncio.sleep(2.5)
 
             # Cập nhật mốc checkpoint lùi dần
             min_id_in_batch = min(m.id for m in messages)
@@ -234,7 +234,7 @@ async def run_turbo_sweeper():
                     await session.commit()
 
             logger.info(f"📊 Đã lưu mốc tiến độ: #{current_offset} | Đã vợt: {total_forwarded} mô hình trọn bộ | Bỏ qua: {total_skipped} file trùng.")
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(1.5)
 
         except FloodWaitError as fwe:
             wait_sec = fwe.seconds + 5
