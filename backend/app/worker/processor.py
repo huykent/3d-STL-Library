@@ -79,6 +79,60 @@ async def _add_log_by_id(model_id, step: str, message: str) -> None:
         logger.warning(f"Error in _add_log_by_id: {e}")
 
 
+def _extract_3mf_thumbnail(file_path: str, output_dir: str, model_id: str) -> str | None:
+    """Extract embedded plate thumbnail from Bambu Studio / OrcaSlicer .3mf file."""
+    import zipfile
+    import shutil
+    try:
+        if not file_path or not os.path.exists(file_path):
+            return None
+        
+        # Check if it's a 3mf directly
+        if file_path.lower().endswith('.3mf'):
+            with zipfile.ZipFile(file_path, 'r') as z:
+                plate_candidates = [
+                    n for n in z.namelist() 
+                    if ('plate_' in n.lower() or 'thumbnail' in n.lower()) and n.lower().endswith(('.png', '.jpg', '.jpeg'))
+                ]
+                plate_candidates.sort(key=lambda x: (not x.endswith('plate_1.png'), len(x)))
+                if plate_candidates:
+                    chosen = plate_candidates[0]
+                    ext = os.path.splitext(chosen)[1]
+                    out_filename = f"{model_id}_plate_1{ext}"
+                    out_path = os.path.join(output_dir, out_filename)
+                    with z.open(chosen) as src, open(out_path, 'wb') as dst:
+                        shutil.copyfileobj(src, dst)
+                    logger.info(f"[{model_id}] Trích xuất thành công thumbnail 3MF gốc: {out_filename} ({chosen})")
+                    return out_filename
+        
+        # If it's a .zip archive, check if there's an internal .3mf
+        elif file_path.lower().endswith('.zip'):
+            with zipfile.ZipFile(file_path, 'r') as z:
+                for name in z.namelist():
+                    if name.lower().endswith('.3mf'):
+                        import io
+                        with z.open(name) as sub_3mf_file:
+                            sub_bytes = io.BytesIO(sub_3mf_file.read())
+                            with zipfile.ZipFile(sub_bytes, 'r') as sub_z:
+                                plate_candidates = [
+                                    n for n in sub_z.namelist() 
+                                    if ('plate_' in n.lower() or 'thumbnail' in n.lower()) and n.lower().endswith(('.png', '.jpg', '.jpeg'))
+                                ]
+                                plate_candidates.sort(key=lambda x: (not x.endswith('plate_1.png'), len(x)))
+                                if plate_candidates:
+                                    chosen = plate_candidates[0]
+                                    ext = os.path.splitext(chosen)[1]
+                                    out_filename = f"{model_id}_plate_1{ext}"
+                                    out_path = os.path.join(output_dir, out_filename)
+                                    with sub_z.open(chosen) as src, open(out_path, 'wb') as dst:
+                                        shutil.copyfileobj(src, dst)
+                                    logger.info(f"[{model_id}] Trích xuất thành công thumbnail 3MF từ gói zip: {out_filename}")
+                                    return out_filename
+    except Exception as e:
+        logger.debug(f"[{model_id}] Không thể trích xuất thumbnail 3MF: {e}")
+    return None
+
+
 async def _assign_tags_to_model(session: AsyncSession, model: Model3D, keyword_str: str) -> None:
     """Parse keyword string, upsert Tag records (PostgreSQL ON CONFLICT), and assign to model.tags."""
     import re as _re
@@ -407,7 +461,16 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
                     model.thumbnail_path = image_paths[0]
                 await _add_log(session, model, "Album (82%)", f"[82%] Tải thành công {len(image_paths)} ảnh demo từ Telegram.")
             else:
-                await _add_log(session, model, "Album (78%)", "[78%] Không có ảnh demo đính kèm.")
+                await _add_log(session, model, "Album (78%)", "[78%] Không có ảnh demo đính kèm từ Telegram.")
+
+            # Nếu chưa có ảnh demo, thử trích xuất trực tiếp từ file 3MF
+            if not image_paths:
+                extracted_thumb = _extract_3mf_thumbnail(tmp_file, settings.THUMBNAIL_DIR, str(model.id))
+                if extracted_thumb:
+                    image_paths.append(extracted_thumb)
+                    model.thumbnail_path = extracted_thumb
+                    model.image_paths = [extracted_thumb]
+                    await _add_log(session, model, "Album (82%)", f"[82%] Đã trích xuất ảnh xem trước 3MF gốc chất lượng cao.")
 
             # ── Step 4: Phân loại / AI Tagging (90%) ──────────────────────
             message_text = tg_message.text or ""
@@ -531,71 +594,112 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
                             if os.path.exists(full_p):
                                 image_files.append(full_p)
                                 
-                    if image_files:
-                        await _add_log(session, model, "Backup (98%)", f"[98%] Đang upload album ({len(image_files)} ảnh) + file 3D sang nhóm đích...")
+                    # ── CƠ CHẾ FAST-RELAY: Thử Forward tin nhắn gốc sang nhóm đích trước (0.1s, 0MB Upload) ──
+                    forwarded_doc = None
+                    try:
+                        fwd_res = await telegram_client.forward_messages(
+                            target_entity,
+                            message_id,
+                            from_peer=chat_id
+                        )
+                        if fwd_res:
+                            forwarded_doc = fwd_res[0] if isinstance(fwd_res, list) else fwd_res
+                            logger.info(f"[{model.id}] Chuyển tiếp thành công tin nhắn gốc sang nhóm đích: Msg #{forwarded_doc.id}")
+                            model.telegram_target_message_id = forwarded_doc.id
+                            if forwarded_doc.document:
+                                model.telegram_file_id = str(forwarded_doc.document.id)
+                    except Exception as fwd_err:
+                        logger.info(f"[{model.id}] Kênh nguồn chặn forward hoặc lỗi ({fwd_err}). Sẽ dùng upload file truyền thống.")
 
-                        upload_retries = 3
-                        album_msgs = None
-                        for uattempt in range(1, upload_retries + 1):
+                    if forwarded_doc:
+                        # Forward thành công -> BỎ QUA HOÀN TOÀN VIỆC UPLOAD FILE HÀNG GB!
+                        await _add_log(session, model, "Backup (98%)", f"[98%] Đã chuyển tiếp (forward) file gốc siêu tốc sang nhóm đích (0.1s, 0MB Upload).")
+                        if image_files:
                             try:
-                                album_msgs = await telegram_client.send_file(
+                                await telegram_client.send_file(
                                     target_entity,
                                     image_files,
-                                    caption=caption
+                                    caption=caption,
+                                    reply_to=forwarded_doc.id
                                 )
-                                break
-                            except UploadFloodWait as fe:
-                                wait_sec = fe.seconds + 2
-                                logger.warning(f"[FloodWait Upload Album] Chờ {wait_sec}s")
-                                await asyncio.sleep(wait_sec)
-                        
-                        reply_to_msg_id = album_msgs[0].id if (album_msgs and isinstance(album_msgs, list)) else (album_msgs.id if album_msgs else None)
-                        from telethon.tl.types import DocumentAttributeFilename
-
-                        doc_msg = None
-                        for uattempt in range(1, upload_retries + 1):
+                            except Exception as album_err:
+                                logger.warning(f"Failed to send companion album: {album_err}")
+                        else:
                             try:
-                                doc_msg = await telegram_client.send_file(
+                                await telegram_client.send_message(
                                     target_entity,
-                                    tmp_file,
-                                    reply_to=reply_to_msg_id,
-                                    attributes=[DocumentAttributeFilename(file_name=model.original_filename)]
+                                    caption,
+                                    reply_to=forwarded_doc.id
                                 )
-                                break
-                            except UploadFloodWait as fe:
-                                wait_sec = fe.seconds + 2
-                                logger.warning(f"[FloodWait Upload File] Chờ {wait_sec}s")
-                                await asyncio.sleep(wait_sec)
-
-                        if doc_msg:
-                            model.telegram_target_message_id = doc_msg.id
-                            if doc_msg.document:
-                                model.telegram_file_id = str(doc_msg.document.id)
+                            except Exception as caption_err:
+                                logger.warning(f"Failed to send companion caption: {caption_err}")
                     else:
-                        await _add_log(session, model, "Backup (98%)", f"[98%] Đang upload file 3D kèm mô tả sang nhóm đích...")
+                        # Fallback: Kênh chặn forward -> Bắt buộc upload lại file tmp_file
+                        if image_files:
+                            await _add_log(session, model, "Backup (98%)", f"[98%] Đang upload album ({len(image_files)} ảnh) + file 3D sang nhóm đích...")
 
-                        upload_retries = 3
-                        tg_msg = None
-                        for uattempt in range(1, upload_retries + 1):
-                            try:
-                                tg_msg = await telegram_client.send_file(
-                                    target_entity,
-                                    tmp_file,
-                                    caption=caption
-                                )
-                                break
-                            except UploadFloodWait as fe:
-                                wait_sec = fe.seconds + 2
-                                logger.warning(f"[FloodWait Upload] Chờ {wait_sec}s")
-                                await asyncio.sleep(wait_sec)
+                            upload_retries = 3
+                            album_msgs = None
+                            for uattempt in range(1, upload_retries + 1):
+                                try:
+                                    album_msgs = await telegram_client.send_file(
+                                        target_entity,
+                                        image_files,
+                                        caption=caption
+                                    )
+                                    break
+                                except UploadFloodWait as fe:
+                                    wait_sec = fe.seconds + 2
+                                    logger.warning(f"[FloodWait Upload Album] Chờ {wait_sec}s")
+                                    await asyncio.sleep(wait_sec)
+                            
+                            reply_to_msg_id = album_msgs[0].id if (album_msgs and isinstance(album_msgs, list)) else (album_msgs.id if album_msgs else None)
+                            from telethon.tl.types import DocumentAttributeFilename
 
-                        if tg_msg:
-                            model.telegram_target_message_id = tg_msg.id
-                            if tg_msg.document:
-                                model.telegram_file_id = str(tg_msg.document.id)
+                            doc_msg = None
+                            for uattempt in range(1, upload_retries + 1):
+                                try:
+                                    doc_msg = await telegram_client.send_file(
+                                        target_entity,
+                                        tmp_file,
+                                        reply_to=reply_to_msg_id,
+                                        attributes=[DocumentAttributeFilename(file_name=model.original_filename)]
+                                    )
+                                    break
+                                except UploadFloodWait as fe:
+                                    wait_sec = fe.seconds + 2
+                                    logger.warning(f"[FloodWait Upload File] Chờ {wait_sec}s")
+                                    await asyncio.sleep(wait_sec)
+
+                            if doc_msg:
+                                model.telegram_target_message_id = doc_msg.id
+                                if doc_msg.document:
+                                    model.telegram_file_id = str(doc_msg.document.id)
+                        else:
+                            await _add_log(session, model, "Backup (98%)", f"[98%] Đang upload file 3D kèm mô tả sang nhóm đích...")
+
+                            upload_retries = 3
+                            tg_msg = None
+                            for uattempt in range(1, upload_retries + 1):
+                                try:
+                                    tg_msg = await telegram_client.send_file(
+                                        target_entity,
+                                        tmp_file,
+                                        caption=caption
+                                    )
+                                    break
+                                except UploadFloodWait as fe:
+                                    wait_sec = fe.seconds + 2
+                                    logger.warning(f"[FloodWait Upload] Chờ {wait_sec}s")
+                                    await asyncio.sleep(wait_sec)
+
+                            if tg_msg:
+                                model.telegram_target_message_id = tg_msg.id
+                                if tg_msg.document:
+                                    model.telegram_file_id = str(tg_msg.document.id)
 
                     await session.commit()
-                    await _add_log(session, model, "Backup (99%)", "[99%] Upload thành công lên nhóm đích.")
+                    await _add_log(session, model, "Backup (99%)", "[99%] Lưu trữ thành công lên nhóm đích.")
                 except Exception as upload_exc:
                     err_msg = f"Upload lên nhóm đích ({target_chat_str}) thất bại: {upload_exc}"
                     logger.error(f"[{model.id}] {err_msg}", exc_info=True)

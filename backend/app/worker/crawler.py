@@ -108,27 +108,8 @@ async def cron_crawl_history(ctx: dict) -> None:
                             else:
                                 logger.info(f"[CÀO LỊCH SỬ] 🔄 File '{file_name}' chưa có trên nhóm đích. Đẩy vào hàng đợi cào & upload...")
                         else:
-                            # DB trống hoặc chưa có, kiểm tra trực tiếp trên Nhóm Đích (để chống trùng khi đổi VPS)
-                            from app.config import get_settings
-                            target_chat_id_str = await SettingsService.get_setting("TELEGRAM_TARGET_CHAT_ID", get_settings().TELEGRAM_TARGET_CHAT_ID)
-                            if target_chat_id_str:
-                                try:
-                                    target_chat_id = int(target_chat_id_str)
-                                    found_in_target = False
-                                    # Tìm kiếm tên file trong nhóm đích
-                                    async for tg_msg in telegram_client.iter_messages(target_chat_id, search=file_name, limit=5):
-                                        if tg_msg.document and tg_msg.document.size == file_size:
-                                            for attr in tg_msg.document.attributes:
-                                                if hasattr(attr, 'file_name') and attr.file_name == file_name:
-                                                    found_in_target = True
-                                                    break
-                                        if found_in_target: break
-                                        
-                                    if found_in_target:
-                                        logger.info(f"[CÀO LỊCH SỬ] 🎯 File '{file_name}' đã tồn tại sẵn trên nhóm đích (tìm thấy qua Search). Bỏ qua.")
-                                        continue
-                                except Exception as e:
-                                    logger.error(f"Lỗi khi search file trên nhóm đích: {e}")
+                            # Chưa từng thấy trong DB -> Đẩy vào hàng đợi cào
+                            pass
 
 
                         # Enqueue job

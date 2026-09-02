@@ -360,23 +360,30 @@ export function StlViewer({ modelUrl, fileExtension, filename, onSpecsComputed }
       window.removeEventListener('resize', handleResize);
       cancelAnimationFrame(animationFrameId);
       controls.dispose();
-      renderer.dispose();
-      if (loadedObject) {
-        loadedObject.traverse((child) => {
-          if ((child as THREE.Mesh).isMesh) {
-            const m = child as THREE.Mesh;
-            if (m.geometry) m.geometry.dispose();
-            if (m.material) {
-              if (Array.isArray(m.material)) {
-                m.material.forEach((mat) => mat.dispose());
-              } else {
-                m.material.dispose();
-              }
+
+      // Deep dispose entire scene to prevent WebGL memory leaks
+      scene.traverse((child) => {
+        if ((child as THREE.Mesh).isMesh) {
+          const m = child as THREE.Mesh;
+          if (m.geometry) m.geometry.dispose();
+          if (m.material) {
+            if (Array.isArray(m.material)) {
+              m.material.forEach((mat) => {
+                if ('map' in mat && mat.map) mat.map.dispose();
+                mat.dispose();
+              });
+            } else {
+              if ('map' in m.material && (m.material as any).map) (m.material as any).map.dispose();
+              m.material.dispose();
             }
           }
-        });
-      }
-      if (container.contains(renderer.domElement)) {
+        }
+      });
+
+      renderer.dispose();
+      renderer.forceContextLoss();
+
+      if (container && container.contains(renderer.domElement)) {
         container.removeChild(renderer.domElement);
       }
     };
