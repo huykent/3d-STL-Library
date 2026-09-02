@@ -110,6 +110,8 @@ interface QueueStatusResponse {
   };
   target_upload_info: {
     target_chat_id: string;
+    total_files_backed_up?: number;
+    total_gb_backed_up?: number;
     active_uploads: ActiveJob[];
     recent_uploads: RecentUploadItem[];
   };
@@ -574,6 +576,28 @@ export default function ActiveQueuePage() {
                 <div>
                   <p className="text-xs font-bold text-emerald-200">Nhóm Đích Lưu Trữ</p>
                   <p className="text-[10px] font-mono text-emerald-400/80">ID: {data?.target_upload_info?.target_chat_id ?? "Chưa cấu hình"}</p>
+                </div>
+              </div>
+            </div>
+
+            {/* ── BẢNG ĐẾM DUNG LƯỢNG & TỔNG FILE TRÊN NHÓM ĐÍCH ── */}
+            <div className="grid grid-cols-2 gap-2">
+              <div className="bg-gradient-to-br from-emerald-500/15 to-emerald-900/20 border border-emerald-500/30 p-2.5 rounded-xl shadow-inner">
+                <span className="text-[10px] text-emerald-400 font-semibold uppercase tracking-wider block">File Trên Kênh Đích</span>
+                <div className="flex items-baseline gap-1 mt-0.5">
+                  <span className="text-xl font-black text-white font-mono tracking-tight">
+                    {data?.target_upload_info?.total_files_backed_up?.toLocaleString() ?? 0}
+                  </span>
+                  <span className="text-[10px] text-emerald-400 font-medium">file</span>
+                </div>
+              </div>
+              <div className="bg-gradient-to-br from-blue-500/15 to-indigo-900/20 border border-blue-500/30 p-2.5 rounded-xl shadow-inner">
+                <span className="text-[10px] text-blue-400 font-semibold uppercase tracking-wider block">Dung Lượng Đã Lưu</span>
+                <div className="flex items-baseline gap-1 mt-0.5">
+                  <span className="text-xl font-black text-white font-mono tracking-tight">
+                    {data?.target_upload_info?.total_gb_backed_up ?? 0}
+                  </span>
+                  <span className="text-[10px] text-blue-400 font-medium">GB</span>
                 </div>
               </div>
             </div>

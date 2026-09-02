@@ -510,6 +510,14 @@ async def get_queue_status_api(
 
     completed_today_count = (await db.execute(stmt_completed_today)).scalar() or 0
 
+    # Target storage stats (total backed up files & total GB)
+    stmt_target_stats = select(
+        func.count(Model3D.id),
+        func.sum(Model3D.file_size_bytes)
+    ).where(Model3D.telegram_file_id.isnot(None))
+    t_count, t_bytes = (await db.execute(stmt_target_stats)).one()
+    t_gb = round((t_bytes or 0) / (1024**3), 2)
+
     return {
         "summary": {
             "active_count": len(active_jobs),
@@ -534,6 +542,8 @@ async def get_queue_status_api(
         },
         "target_upload_info": {
             "target_chat_id": target_chat_str or "Chưa cấu hình",
+            "total_files_backed_up": t_count or 0,
+            "total_gb_backed_up": t_gb,
             "active_uploads": upload_jobs,
             "recent_uploads": recent_uploads
         },
