@@ -363,6 +363,44 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
             
         await session.commit()
 
+        # ── Step 0: Fast-Forward Relay sang nhóm đích NGAY LẬP TỨC (0.05s) ──
+        # Tác vụ forward KHÔNG TỐN BĂNG THÔNG, chạy ngay TRƯỚC DOWNLOAD_SEMAPHORE.
+        # Giúp tất cả file trong hàng đợi được sao lưu và lấy File ID ngay lập tức
+        # trong khi các file nặng khác đang tải xuống!
+        from app.services.settings import SettingsService
+        target_chat_str = await SettingsService.get_setting("TELEGRAM_TARGET_CHAT_ID")
+        if not target_chat_str:
+            target_chat_str = settings.TELEGRAM_TARGET_CHAT_ID
+
+        target_entity = None
+        if target_chat_str:
+            try:
+                target_chat_id = int(target_chat_str.strip())
+                try:
+                    target_entity = await telegram_client.get_entity(target_chat_id)
+                except Exception:
+                    await telegram_client.get_dialogs(limit=100)
+                    target_entity = await telegram_client.get_entity(target_chat_id)
+
+                if target_entity and not model.telegram_file_id:
+                    try:
+                        fwd_res = await telegram_client.forward_messages(
+                            target_entity,
+                            message_id,
+                            from_peer=chat_id
+                        )
+                        if fwd_res:
+                            forwarded_doc = fwd_res[0] if isinstance(fwd_res, list) else fwd_res
+                            model.telegram_target_message_id = forwarded_doc.id
+                            if forwarded_doc.document:
+                                model.telegram_file_id = str(forwarded_doc.document.id)
+                            await session.commit()
+                            logger.info(f"[{model.id}] ⚡ ĐÃ FORWARD TỨC THÌ (0.05s) sang nhóm đích: Msg #{forwarded_doc.id} (File ID: {model.telegram_file_id})")
+                            await _add_log(session, model, "Forward tức thì (5%)", f"[5%] Đã forward file sang nhóm đích thành công trong 0.05s!")
+                    except Exception as fwd_err:
+                        logger.info(f"[{model.id}] Kênh nguồn chặn forward ({fwd_err}). Sẽ tải về và upload ở bước sau.")
+            except Exception as te_err:
+                logger.warning(f"Target entity error in early forward: {te_err}")
 
         try:
             pipeline_start = time.time()
@@ -594,33 +632,35 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
                             if os.path.exists(full_p):
                                 image_files.append(full_p)
                                 
-                    # ── CƠ CHẾ FAST-RELAY: Thử Forward tin nhắn gốc sang nhóm đích trước (0.1s, 0MB Upload) ──
-                    forwarded_doc = None
-                    try:
-                        fwd_res = await telegram_client.forward_messages(
-                            target_entity,
-                            message_id,
-                            from_peer=chat_id
-                        )
-                        if fwd_res:
-                            forwarded_doc = fwd_res[0] if isinstance(fwd_res, list) else fwd_res
-                            logger.info(f"[{model.id}] Chuyển tiếp thành công tin nhắn gốc sang nhóm đích: Msg #{forwarded_doc.id}")
-                            model.telegram_target_message_id = forwarded_doc.id
-                            if forwarded_doc.document:
-                                model.telegram_file_id = str(forwarded_doc.document.id)
-                    except Exception as fwd_err:
-                        logger.info(f"[{model.id}] Kênh nguồn chặn forward hoặc lỗi ({fwd_err}). Sẽ dùng upload file truyền thống.")
+                    # ── CƠ CHẾ FAST-RELAY: Kiểm tra hoặc Forward sang nhóm đích (0.1s, 0MB Upload) ──
+                    target_msg_id = model.telegram_target_message_id
 
-                    if forwarded_doc:
+                    if not target_msg_id:
+                        try:
+                            fwd_res = await telegram_client.forward_messages(
+                                target_entity,
+                                message_id,
+                                from_peer=chat_id
+                            )
+                            if fwd_res:
+                                forwarded_doc = fwd_res[0] if isinstance(fwd_res, list) else fwd_res
+                                model.telegram_target_message_id = forwarded_doc.id
+                                target_msg_id = forwarded_doc.id
+                                if forwarded_doc.document:
+                                    model.telegram_file_id = str(forwarded_doc.document.id)
+                        except Exception as fwd_err:
+                            logger.info(f"[{model.id}] Kênh nguồn chặn forward hoặc lỗi ({fwd_err}). Sẽ dùng upload file truyền thống.")
+
+                    if target_msg_id and model.telegram_file_id:
                         # Forward thành công -> BỎ QUA HOÀN TOÀN VIỆC UPLOAD FILE HÀNG GB!
-                        await _add_log(session, model, "Backup (98%)", f"[98%] Đã chuyển tiếp (forward) file gốc siêu tốc sang nhóm đích (0.1s, 0MB Upload).")
+                        await _add_log(session, model, "Backup (98%)", f"[98%] Đã có bản sao lưu chuyển tiếp siêu tốc. Đang đính kèm thông tin mô tả...")
                         if image_files:
                             try:
                                 await telegram_client.send_file(
                                     target_entity,
                                     image_files,
                                     caption=caption,
-                                    reply_to=forwarded_doc.id
+                                    reply_to=target_msg_id
                                 )
                             except Exception as album_err:
                                 logger.warning(f"Failed to send companion album: {album_err}")
@@ -629,7 +669,7 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
                                 await telegram_client.send_message(
                                     target_entity,
                                     caption,
-                                    reply_to=forwarded_doc.id
+                                    reply_to=target_msg_id
                                 )
                             except Exception as caption_err:
                                 logger.warning(f"Failed to send companion caption: {caption_err}")

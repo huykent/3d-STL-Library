@@ -49,85 +49,85 @@ async def cron_crawl_history(ctx: dict) -> None:
             
         for group in groups:
             chat_id = group.chat_id
-            
-            # Use offset_id to crawl backwards. If none, start from the latest (0)
             offset_id = group.oldest_message_id or 0
-            
             group_title = group.name or str(chat_id)
-            logger.info(f"[CÀO LỊCH SỬ] 🔍 Đang quét nhóm '{group_title}' (ID: {chat_id}) | Bắt đầu từ tin nhắn ID: #{offset_id or 'MỚI NHẤT'}")
-            
+            logger.info(f"[CÀO LỊCH SỬ] 🔍 Đang quét nhóm '{group_title}' (ID: {chat_id}) | Mốc bắt đầu: #{offset_id or 'MỚI NHẤT'}")
+
             try:
-                # Fetch a small batch of older messages
-                messages = await telegram_client.get_messages(chat_id, offset_id=offset_id, limit=20)
-                
-                found_valid_file = False
-                new_oldest_id = offset_id
-                
-                for message in messages:
-                    # Update oldest ID seen
-                    if new_oldest_id == 0 or message.id < new_oldest_id:
-                        new_oldest_id = message.id
-                        
-                    if not message.document:
-                        continue
-                        
-                    file_ext = ""
-                    file_name = "unknown"
-                    for attribute in message.document.attributes:
-                        if hasattr(attribute, 'file_name'):
-                            file_name = attribute.file_name
-                            file_ext = file_name.split('.')[-1].lower()
-                            break
-                            
-                    if file_ext in ['stl', 'obj', '3mf', 'pm7m', 'pwscene', 'zip', 'rar']:
-                        file_size_mb = (message.document.size / (1024 * 1024)) if message.document else 0
-                        logger.info(f"[CÀO LỊCH SỬ] 📁 Tìm thấy file 3D #{message.id}: '{file_name}' ({file_size_mb:.1f} MB) trong nhóm '{group_title}'")
-                        
-                        # Check date constraint
-                        if message.date and message.date < target_date:
-                            logger.info(f"[CÀO LỊCH SỬ] ⏩ Tin nhắn #{message.id} đã cũ hơn {history_days} ngày. Bỏ qua.")
-                        # Check for duplicates (skip if completed or max retries exceeded)
+                # Quét theo đợt (tối đa 3 đợt x 40 tin = 120 tin/chu kỳ/nhóm) để cào liên tục
+                max_batches = 3
+                batch_size = 40
+                total_files_queued = 0
 
-                        file_id_str = str(message.document.id)
-                        file_size = message.document.size
-                        stmt_dup = select(Model3D).where(
-                            (Model3D.telegram_message_id == message.id) |
-                            (Model3D.telegram_file_id == file_id_str) |
-                            ((Model3D.original_filename == file_name) & (Model3D.file_size_bytes == file_size))
-                        )
-                        existing_res = await session.execute(stmt_dup)
-                        existing_m = existing_res.scalars().first()
-                        if existing_m:
-                            # Chỉ bỏ qua nếu ĐÃ HOÀN TẤT VÀ ĐÃ UPLOAD LÊN NHÓM ĐÍCH (telegram_file_id is not None)
-                            if existing_m.processing_status == ProcessingStatus.completed and existing_m.telegram_file_id:
-                                logger.info(f"[CÀO LỊCH SỬ] ⏭️ File '{file_name}' đã có trong nhóm đích (theo DB). Bỏ qua.")
-                                continue
-                            elif (existing_m.processing_retries or 0) >= 5:
-                                logger.info(f"[CÀO LỊCH SỬ] ⏭️ File '{file_name}' đã thử lại quá 5 lần thất bại. Bỏ qua.")
-                                continue
-                            else:
-                                logger.info(f"[CÀO LỊCH SỬ] 🔄 File '{file_name}' chưa có trên nhóm đích. Đẩy vào hàng đợi cào & upload...")
-                        else:
-                            # Chưa từng thấy trong DB -> Đẩy vào hàng đợi cào
-                            pass
+                for b in range(max_batches):
+                    messages = await telegram_client.get_messages(chat_id, offset_id=offset_id, limit=batch_size)
+                    if not messages:
+                        break
 
+                    new_oldest_id = offset_id
 
-                        # Enqueue job
-                        await redis.enqueue_job(
-                            'process_telegram_message', 
-                            message_id=message.id,
-                            chat_id=chat_id
-                        )
-                        logger.info(f"[CÀO LỊCH SỬ] 🚀 Đã đẩy file '{file_name}' (#{message.id}) vào hàng đợi xử lý! (Mốc Msg ID #{new_oldest_id})")
-                        found_valid_file = True
-                        await asyncio.sleep(1)
+                    for message in messages:
+                        if new_oldest_id == 0 or message.id < new_oldest_id:
+                            new_oldest_id = message.id
 
-                # Save progress so next time we go further back
-                if messages:
+                        if not message.document:
+                            continue
+
+                        file_ext = ""
+                        file_name = "unknown"
+                        for attribute in message.document.attributes:
+                            if hasattr(attribute, 'file_name'):
+                                file_name = attribute.file_name
+                                file_ext = file_name.split('.')[-1].lower()
+                                break
+
+                        if file_ext in ['stl', 'obj', '3mf', 'pm7m', 'pwscene', 'zip', 'rar']:
+                            file_size_mb = (message.document.size / (1024 * 1024)) if message.document else 0
+
+                            # Check date constraint
+                            if message.date and message.date < target_date:
+                                logger.info(f"[CÀO LỊCH SỬ] ⏩ Tin nhắn #{message.id} ({file_name}) đã cũ hơn {history_days} ngày. Dừng quét nhóm.")
+                                break
+
+                            # Check duplicates in DB
+                            file_id_str = str(message.document.id)
+                            file_size = message.document.size
+                            stmt_dup = select(Model3D).where(
+                                (Model3D.telegram_message_id == message.id) |
+                                (Model3D.telegram_file_id == file_id_str) |
+                                ((Model3D.original_filename == file_name) & (Model3D.file_size_bytes == file_size))
+                            )
+                            existing_res = await session.execute(stmt_dup)
+                            existing_m = existing_res.scalars().first()
+                            if existing_m:
+                                if existing_m.processing_status == ProcessingStatus.completed and existing_m.telegram_file_id:
+                                    continue
+                                elif (existing_m.processing_retries or 0) >= 5:
+                                    continue
+
+                            # Đẩy vào hàng đợi Redis để worker bốc ngay và FORWARD LẬP TỨC (0.05s)
+                            await redis.enqueue_job(
+                                'process_telegram_message', 
+                                message_id=message.id,
+                                chat_id=chat_id
+                            )
+                            total_files_queued += 1
+                            logger.info(f"[CÀO LỊCH SỬ] 🚀 Đã đẩy '{file_name}' (#{message.id}) vào hàng đợi! (Sẽ forward tức thì)")
+
+                            # Nghỉ nhẹ 0.1s nhường luồng event loop cho worker tải & forward
+                            await asyncio.sleep(0.1)
+
+                    # Lưu mốc tiến độ để đợt cào tiếp theo tiếp tục lùi về sau
+                    offset_id = new_oldest_id
                     group.oldest_message_id = new_oldest_id
                     group.last_message_id = new_oldest_id
                     await session.commit()
-                
+
+                    # Nghỉ 0.5s giữa các batch
+                    await asyncio.sleep(0.5)
+
+                logger.info(f"[CÀO LỊCH SỬ] Hoàn tất quét nhóm '{group_title}', đã xếp hàng {total_files_queued} file 3D mới.")
+
             except Exception as e:
                 logger.error(f"Failed to crawl history for group {chat_id}: {e}")
 
