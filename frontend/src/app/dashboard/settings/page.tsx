@@ -1,12 +1,12 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { getSettings, updateSettings, restartTelegram, verifyOtp, sendCode, triggerManualCrawl } from '@/lib/api';
+import { getSettings, updateSettings, restartTelegram, verifyOtp, sendCode, triggerManualCrawl, autoDiscoverGroups } from '@/lib/api';
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { Loader2 } from "lucide-react";
+import { Loader2, Search, Sparkles, CheckCircle2 } from "lucide-react";
 
 export default function SettingsPage() {
   const [settings, setSettings] = useState<Record<string, string>>({});
@@ -15,6 +15,15 @@ export default function SettingsPage() {
   const [isSending, setIsSending] = useState(false);
   const [otpLoading, setOtpLoading] = useState(false);
   const [message, setMessage] = useState('');
+
+  // Auto-discover Groups State
+  const [discovering, setDiscovering] = useState(false);
+  const [discoveredInfo, setDiscoveredInfo] = useState<{
+    added_count: number;
+    added_groups: string[];
+    total_groups: number;
+    message: string;
+  } | null>(null);
 
   // OTP Verification Modal
   const [showOtp, setShowOtp] = useState(false);
@@ -60,6 +69,30 @@ export default function SettingsPage() {
       setMessage('Failed to save settings.');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleAutoDiscover = async () => {
+    setDiscovering(true);
+    setMessage('');
+    setDiscoveredInfo(null);
+    try {
+      const res = await autoDiscoverGroups();
+      setDiscoveredInfo({
+        added_count: res.added_count,
+        added_groups: res.added_groups || [],
+        total_groups: res.total_groups,
+        message: res.message
+      });
+      if (res.chat_ids) {
+        setSettings(prev => ({ ...prev, TELEGRAM_CHAT_IDS: res.chat_ids }));
+      }
+      setMessage(res.message);
+    } catch (err: any) {
+      console.error("Auto discover failed:", err);
+      setMessage(err.response?.data?.detail || "Quét nhóm thất bại. Vui lòng kiểm tra tài khoản Telegram đã đăng nhập chưa.");
+    } finally {
+      setDiscovering(false);
     }
   };
 
@@ -203,15 +236,58 @@ export default function SettingsPage() {
                 className="bg-[#0d1117] border-white/10 text-white"
               />
             </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-gray-300">Chat IDs to Monitor</label>
+            <div className="space-y-2 md:col-span-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <label className="text-sm font-medium text-gray-300">
+                  Chat IDs to Monitor ({settings.TELEGRAM_CHAT_IDS ? settings.TELEGRAM_CHAT_IDS.split(',').filter(Boolean).length : 0} nhóm đang theo dõi)
+                </label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleAutoDiscover}
+                  disabled={discovering}
+                  className="bg-blue-600/10 border-blue-500/30 text-blue-400 hover:bg-blue-500/20 text-xs h-8 gap-1.5 transition-all shadow-sm"
+                >
+                  {discovering ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Đang quét danh sách Telegram...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-3.5 h-3.5 text-blue-400" />
+                      <span>Quét & Tự động thêm tất cả nhóm 3D</span>
+                    </>
+                  )}
+                </Button>
+              </div>
+
+              {discoveredInfo && (
+                <div className="p-3 bg-blue-950/40 border border-blue-500/30 rounded-lg text-xs space-y-1.5 animate-in fade-in duration-300">
+                  <div className="flex items-center gap-1.5 text-blue-300 font-semibold">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                    <span>{discoveredInfo.message}</span>
+                  </div>
+                  {discoveredInfo.added_groups.length > 0 && (
+                    <div className="pl-5 text-gray-300">
+                      <span className="text-gray-400">Nhóm mới phát hiện & đã thêm: </span>
+                      <span className="font-medium text-white">{discoveredInfo.added_groups.join(', ')}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <Input
                 type="text"
                 value={settings.TELEGRAM_CHAT_IDS || ''}
                 onChange={(e) => handleChange('TELEGRAM_CHAT_IDS', e.target.value)}
                 placeholder="-100123456789, -100987654321"
-                className="bg-[#0d1117] border-white/10 text-white"
+                className="bg-[#0d1117] border-white/10 text-white font-mono text-xs"
               />
+              <p className="text-xs text-gray-400">
+                Danh sách ID các nhóm nguồn cách nhau bằng dấu phẩy. Bấm nút <b>Quét & Tự động thêm tất cả nhóm 3D</b> ở trên để hệ thống tự động tìm và cập nhật tất cả các nhóm 3D từ tài khoản Telegram vào danh sách cào.
+              </p>
             </div>
             <div className="space-y-2 md:col-span-2">
               <label className="text-sm font-medium text-gray-300">Target Chat ID (Hidden Group for Uploads)</label>

@@ -249,7 +249,7 @@ async def auto_discover_groups_api(
         if not client.is_connected():
             await client.connect()
             
-        dialogs = await client.get_dialogs()
+        dialogs = await client.get_dialogs(limit=500)
         
         # Keywords for 3D printing
         keywords = ["3d", "stl", "print", "resin", "mô hình", "figure", "cnc"]
@@ -277,23 +277,50 @@ async def auto_discover_groups_api(
                             chat_id=dialog.id,
                             name=dialog.name,
                             username=getattr(dialog.entity, 'username', None),
-                            is_active=True
+                            is_active=True,
+                            model_count=0
                         )
                         db.add(new_group)
                         added_count += 1
                         added_groups.append(dialog.name)
+                    else:
+                        # Update title if changed
+                        if dialog.name and existing.name != dialog.name:
+                            existing.name = dialog.name
+                        # Ensure active
+                        existing.is_active = True
                         
-        if added_count > 0:
-            await db.commit()
-            # Restart client to pick up new chat_ids
-            import asyncio
-            asyncio.create_task(restart_telegram_client())
+        await db.commit()
+
+        # Fetch all active source groups
+        stmt_all = select(SourceGroup).where(SourceGroup.is_active == True).order_by(SourceGroup.id.asc())
+        all_groups = (await db.execute(stmt_all)).scalars().all()
+        new_chat_ids_str = ",".join(str(g.chat_id) for g in all_groups)
+
+        # Automatically update TELEGRAM_CHAT_IDS setting
+        await SettingsService.update_settings({"TELEGRAM_CHAT_IDS": new_chat_ids_str})
+
+        # Restart telegram client in background so listeners immediately bind to all chats
+        import asyncio
+        asyncio.create_task(restart_telegram_client())
             
         return {
             "status": "success", 
-            "message": f"Successfully discovered and added {added_count} new 3D groups.",
+            "message": f"Đã quét và đồng bộ thành công! Thêm mới: {added_count} nhóm. Tổng cộng đang theo dõi: {len(all_groups)} nhóm 3D.",
             "added_count": added_count,
-            "added_groups": added_groups
+            "added_groups": added_groups,
+            "total_groups": len(all_groups),
+            "chat_ids": new_chat_ids_str,
+            "groups": [
+                {
+                    "id": g.id,
+                    "chat_id": g.chat_id,
+                    "name": g.name,
+                    "is_active": g.is_active,
+                    "model_count": g.model_count or 0
+                }
+                for g in all_groups
+            ]
         }
     except Exception as e:
         import traceback

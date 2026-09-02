@@ -53,6 +53,7 @@ export const restartTelegram = () => api.post('/admin/telegram/restart').then(re
 export const sendCode = (data: {phone: string}) => api.post('/admin/telegram/send-code', data).then(res => res.data);
 export const verifyOtp = (data: {phone: string, code: string, phone_code_hash: string, password?: string}) => api.post('/admin/telegram/verify-otp', data).then(res => res.data);
 export const triggerManualCrawl = (data: {chat_id: number, limit?: number}) => api.post('/admin/telegram/crawl-history', data).then(res => res.data);
+export const autoDiscoverGroups = () => api.post('/admin/telegram/auto-discover-groups').then(res => res.data);
 
 // Upload API
 export const uploadManualFile = (file: File) => {
