@@ -196,22 +196,35 @@ async def run_turbo_sweeper():
                     except Exception as th_err:
                         logger.warning(f"Không thể tải ảnh thumbnail #{photo_msgs[0].id}: {th_err}")
 
-                # 5. Lưu vào Database
+                # 5. Lưu vào Database (Bọc try/except xử lý trùng lặp an toàn tuyệt đối)
                 async with AsyncSessionLocal() as session:
-                    new_model = Model3D(
-                        telegram_file_id=saved_file_id,
-                        telegram_message_id=doc_msg.id,
-                        telegram_target_message_id=target_msg_id,
-                        source_group_id=sg.id if sg else None,
-                        original_filename=file_name,
-                        file_extension=file_ext,
-                        file_size_bytes=file_size_bytes,
-                        processing_status=ProcessingStatus.completed,
-                        image_paths=thumb_filenames,
-                        telegram_message_text=doc_msg.text or (photo_msgs[0].text if photo_msgs else "")
-                    )
-                    session.add(new_model)
-                    await session.commit()
+                    try:
+                        new_model = Model3D(
+                            telegram_file_id=saved_file_id,
+                            telegram_message_id=doc_msg.id,
+                            telegram_target_message_id=target_msg_id,
+                            source_group_id=sg.id if sg else None,
+                            original_filename=file_name,
+                            file_extension=file_ext,
+                            file_size_bytes=file_size_bytes,
+                            processing_status=ProcessingStatus.completed,
+                            image_paths=thumb_filenames,
+                            telegram_message_text=doc_msg.text or (photo_msgs[0].text if photo_msgs else "")
+                        )
+                        session.add(new_model)
+                        await session.commit()
+                    except Exception as ie:
+                        await session.rollback()
+                        stmt_up = select(Model3D).where(
+                            (Model3D.telegram_file_id == saved_file_id) |
+                            (Model3D.telegram_message_id == doc_msg.id)
+                        )
+                        exist_m = (await session.execute(stmt_up)).scalars().first()
+                        if exist_m:
+                            exist_m.telegram_target_message_id = target_msg_id
+                            if thumb_filenames and not exist_m.image_paths:
+                                exist_m.image_paths = thumb_filenames
+                            await session.commit()
 
                 total_forwarded += 1
                 logger.info(
