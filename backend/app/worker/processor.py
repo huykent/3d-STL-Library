@@ -384,19 +384,66 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
 
                 if target_entity and not model.telegram_file_id:
                     try:
+                        # Tìm ảnh đính kèm (Qua reply_to tin nhắn ảnh hoặc tin nhắn ảnh sát trước đó)
+                        photo_ids = []
+                        try:
+                            msg_obj = await telegram_client.get_messages(chat_id, ids=message_id)
+                            if msg_obj and msg_obj.reply_to and msg_obj.reply_to.reply_to_msg_id:
+                                parent_msg = await telegram_client.get_messages(chat_id, ids=msg_obj.reply_to.reply_to_msg_id)
+                                if parent_msg and parent_msg.photo:
+                                    photo_ids.append(parent_msg.id)
+
+                            if not photo_ids:
+                                pre_msgs = await telegram_client.get_messages(
+                                    chat_id, 
+                                    ids=list(range(max(1, message_id - 4), message_id))
+                                )
+                                valid_pre = [m for m in pre_msgs if m is not None]
+                                for pm in reversed(valid_pre):
+                                    if pm.photo:
+                                        photo_ids.insert(0, pm.id)
+                                    elif pm.document:
+                                        break
+                        except Exception as pe:
+                            logger.warning(f"Error finding companion photo for #{message_id}: {pe}")
+
+                        all_ids = photo_ids + [message_id]
                         fwd_res = await telegram_client.forward_messages(
                             target_entity,
-                            message_id,
+                            all_ids,
                             from_peer=chat_id
                         )
                         if fwd_res:
-                            forwarded_doc = fwd_res[0] if isinstance(fwd_res, list) else fwd_res
+                            forwarded_doc = None
+                            if isinstance(fwd_res, list):
+                                for fm in reversed(fwd_res):
+                                    if fm.document:
+                                        forwarded_doc = fm
+                                        break
+                                if not forwarded_doc:
+                                    forwarded_doc = fwd_res[-1]
+                            else:
+                                forwarded_doc = fwd_res
+
                             model.telegram_target_message_id = forwarded_doc.id
                             if forwarded_doc.document:
                                 model.telegram_file_id = str(forwarded_doc.document.id)
+
+                            # Tải nhanh ảnh thumbnail cho Web Dashboard
+                            if photo_ids and not model.image_paths:
+                                try:
+                                    os.makedirs(settings.THUMBNAIL_DIR, exist_ok=True)
+                                    th_name = f"{model.id}_preview.jpg"
+                                    th_full = os.path.join(settings.THUMBNAIL_DIR, th_name)
+                                    await telegram_client.download_media(photo_ids[0], file=th_full)
+                                    if os.path.exists(th_full) and os.path.getsize(th_full) > 0:
+                                        model.image_paths = [th_name]
+                                except Exception as th_err:
+                                    pass
+
                             await session.commit()
-                            logger.info(f"[{model.id}] ⚡ ĐÃ FORWARD TỨC THÌ (0.05s) sang nhóm đích: Msg #{forwarded_doc.id} (File ID: {model.telegram_file_id})")
-                            await _add_log(session, model, "Forward tức thì (5%)", f"[5%] Đã forward file sang nhóm đích thành công trong 0.05s!")
+                            logger.info(f"[{model.id}] ⚡ ĐÃ FORWARD TỨC THÌ ({len(photo_ids)} ảnh + File) sang nhóm đích: Msg #{forwarded_doc.id} (File ID: {model.telegram_file_id})")
+                            await _add_log(session, model, "Forward tức thì (5%)", f"[5%] Đã forward file kèm {len(photo_ids)} ảnh preview sang nhóm đích thành công!")
                     except Exception as fwd_err:
                         logger.info(f"[{model.id}] Kênh nguồn chặn forward ({fwd_err}). Sẽ tải về và upload ở bước sau.")
             except Exception as te_err:
