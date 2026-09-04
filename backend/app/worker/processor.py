@@ -280,7 +280,7 @@ async def _fetch_related_images(telegram_client, chat_id: int, base_message) -> 
     return images
 
 
-async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> None:
+async def process_telegram_message(ctx: dict, message_id: int, chat_id: int, **kwargs) -> None:
     """arq task: download and process a Telegram 3D model message.
 
     Args:
@@ -856,7 +856,7 @@ def _cleanup_orphaned_temp_files(temp_dir: str, max_age_seconds: int = 120) -> N
 
 
 
-async def process_manual_upload(ctx: dict, model_id: str, filepath: str) -> None:
+async def process_manual_upload(ctx: dict, model_id: str, filepath: str, **kwargs) -> None:
     """arq task: Process a manually uploaded 3D model."""
     settings = get_settings()
     telegram_client = ctx.get("telegram_client")
@@ -969,7 +969,7 @@ async def process_manual_upload(ctx: dict, model_id: str, filepath: str) -> None
                     pass
 
 
-async def process_target_message(ctx: dict, message_id: int, chat_id: int) -> None:
+async def process_target_message(ctx: dict, message_id: int, chat_id: int, **kwargs) -> None:
     """
     arq task: Import a 3D file that already exists in the TARGET GROUP into DB.
 

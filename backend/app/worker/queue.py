@@ -28,15 +28,16 @@ async def shutdown(ctx):
 
 from app.worker.crawler import cron_crawl_history, manual_crawl_history, crawl_target_group_history
 from arq import cron
+from arq.worker import func
 
 class WorkerSettings:
     functions = [
-        process_telegram_message,
-        process_manual_upload,
-        manual_crawl_history,
-        process_target_message,
-        crawl_target_group_history,
-        cron_crawl_history,
+        func(process_telegram_message, timeout=7200),
+        func(process_manual_upload, timeout=7200),
+        func(manual_crawl_history, timeout=7200),
+        func(process_target_message, timeout=7200),
+        func(crawl_target_group_history, timeout=7200),
+        func(cron_crawl_history, timeout=7200),
     ]
     on_startup = startup
     on_shutdown = shutdown

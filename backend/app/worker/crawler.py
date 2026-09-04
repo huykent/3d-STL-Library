@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
-async def cron_crawl_history(ctx: dict) -> None:
+async def cron_crawl_history(ctx: dict, **kwargs) -> None:
     """Arq cron job to crawl historical messages from telegram groups."""
     telegram_client = ctx.get("telegram_client")
     if not telegram_client or not telegram_client.is_connected():
@@ -215,35 +215,26 @@ async def manual_crawl_history(ctx: dict, chat_id: int, limit: int = 1) -> None:
                     if existing.scalars().first():
                         logger.info(f"[MANUAL CRAWL] Duplicate file/message {message.id} ({file_name}) in {chat_id}. Skipping.")
                         continue
-                    else:
-                        from app.config import get_settings
-                        from app.services.settings import SettingsService
-                        target_chat_id_str = await SettingsService.get_setting("TELEGRAM_TARGET_CHAT_ID", get_settings().TELEGRAM_TARGET_CHAT_ID)
-                        if target_chat_id_str:
-                            try:
-                                target_chat_id = int(target_chat_id_str)
-                                found_in_target = False
-                                async for tg_msg in telegram_client.iter_messages(target_chat_id, search=file_name, limit=5):
-                                    if tg_msg.document and tg_msg.document.size == file_size:
-                                        for attr in tg_msg.document.attributes:
-                                            if hasattr(attr, 'file_name') and attr.file_name == file_name:
-                                                found_in_target = True
-                                                break
-                                    if found_in_target: break
-                                    
-                                if found_in_target:
-                                    logger.info(f"[MANUAL CRAWL] 🎯 File '{file_name}' đã tồn tại sẵn trên nhóm đích (tìm thấy qua Search). Bỏ qua.")
-                                    continue
-                            except Exception as e:
-                                logger.error(f"Lỗi khi search file trên nhóm đích: {e}")
 
-                        
+                    # Check duplicates in target group first
+                    from app.services.settings import SettingsService
+                    from app.config import get_settings as _get_settings
+                    target_chat_id = await SettingsService.get_setting("TELEGRAM_TARGET_CHAT_ID", _get_settings().TELEGRAM_TARGET_CHAT_ID)
+                    if target_chat_id:
+                        try:
+                            # Search target group for the same filename to avoid duplicate downloads
+                            target_msgs = await telegram_client.get_messages(int(target_chat_id), search=file_name, limit=5)
+                            if target_msgs:
+                                logger.info(f"[MANUAL CRAWL] File '{file_name}' already exists in target group {target_chat_id}. Skipping download.")
+                                continue
+                        except Exception as e:
+                            logger.error(f"Lỗi khi search file trên nhóm đích: {e}")
+
                     logger.info(f"[MANUAL CRAWL] Found 3D file: {message.id} in {chat_id}")
                     await redis.enqueue_job(
                         'process_telegram_message', 
                         message_id=message.id,
                         chat_id=chat_id,
-                        _job_timeout=7200
                     )
                     files_queued += 1
                     # Drip-feed: chờ 2s giữa các lần enqueue để không gửi ồ ạt
@@ -254,7 +245,7 @@ async def manual_crawl_history(ctx: dict, chat_id: int, limit: int = 1) -> None:
         logger.error(f"[MANUAL CRAWL] Failed for group {chat_id}: {e}")
 
 
-async def crawl_target_group_history(ctx: dict, limit: int = 500) -> None:
+async def crawl_target_group_history(ctx: dict, limit: int = 500, **kwargs) -> None:
     """
     Scan the TARGET GROUP for existing 3D files and import them into DB.
     Useful for recovering warehouse data when DB is empty or after VPS migration.
