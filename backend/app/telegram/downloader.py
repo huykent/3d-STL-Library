@@ -115,7 +115,7 @@ async def fast_download_document(
 
         # Borrow initial sender
         try:
-            sender = await client._borrow_sender(dc_id)
+            sender = await client._borrow_exported_sender(dc_id)
         except Exception as be:
             logger.warning(f"[FastDownload] Không thể mượn sender ban đầu: {be}")
             return
@@ -139,12 +139,12 @@ async def fast_download_document(
                     if sender is None or consecutive_errors >= 2:
                         if sender:
                             try:
-                                await client._return_sender(sender)
+                                await client._return_exported_sender(sender)
                             except Exception:
                                 pass
                             sender = None
                         try:
-                            sender = await asyncio.wait_for(client._borrow_sender(dc_id), timeout=8.0)
+                            sender = await asyncio.wait_for(client._borrow_exported_sender(dc_id), timeout=8.0)
                             consecutive_errors = 0
                         except Exception as re_err:
                             logger.warning(f"[FastDownload] Tái kết nối sender thất bại: {re_err}")
@@ -182,7 +182,7 @@ async def fast_download_document(
                         # Reset sender on timeout so a fresh connection is used
                         if sender:
                             try:
-                                await client._return_sender(sender)
+                                await client._return_exported_sender(sender)
                             except Exception:
                                 pass
                             sender = None
@@ -205,7 +205,7 @@ async def fast_download_document(
         finally:
             if sender:
                 try:
-                    await client._return_sender(sender)
+                    await client._return_exported_sender(sender)
                 except Exception:
                     pass
 
@@ -223,7 +223,13 @@ async def fast_download_document(
         logger.info(f"[FastDownload] ✅ Hoàn tất siêu tốc: '{file_name}' ({actual_size:,} bytes)")
         return True
     else:
-        logger.warning(f"[FastDownload] Tải đa luồng chưa đủ dữ liệu ({actual_size} vs {total_size} bytes). Chuyển về chế độ chuẩn...")
+        # Xóa file rác đã pre-allocate bằng 0 trước khi fallback về iter_download
+        try:
+            if os.path.exists(save_path):
+                os.unlink(save_path)
+        except Exception:
+            pass
+        logger.warning(f"[FastDownload] Tải đa luồng chưa đủ dữ liệu ({downloaded} vs {total_size} bytes). Chuyển về chế độ chuẩn...")
         return False
 
 
