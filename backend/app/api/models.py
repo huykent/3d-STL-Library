@@ -535,7 +535,8 @@ async def reprocess_single_model(
     await redis.enqueue_job(
         'process_telegram_message',
         message_id=model.telegram_message_id,
-        chat_id=real_chat_id
+        chat_id=real_chat_id,
+        _job_timeout=7200
     )
 
     return {

@@ -170,7 +170,8 @@ async def manual_crawl_history_api(
         await redis.enqueue_job(
             'manual_crawl_history', 
             chat_id=body.chat_id, 
-            limit=body.limit
+            limit=body.limit,
+            _job_timeout=7200
         )
         return {"status": "success", "message": f"Queued manual crawl for group {body.chat_id}"}
     except Exception as e:
@@ -597,7 +598,8 @@ async def reprocess_failed_models_api(
         await redis.enqueue_job(
             'process_telegram_message',
             message_id=model.telegram_message_id,
-            chat_id=real_chat_id
+            chat_id=real_chat_id,
+            _job_timeout=7200
         )
 
     await db.commit()
@@ -671,7 +673,7 @@ async def full_recrawl_api(
     except Exception as e:
         logger.warning(f"Flush db error: {e}")
 
-    await redis.enqueue_job("cron_crawl_history")
+    await redis.enqueue_job("cron_crawl_history", _job_timeout=7200)
 
     return {
         "status": "success",
@@ -702,7 +704,7 @@ async def crawl_target_group_api(
         raise HTTPException(status_code=400, detail="TELEGRAM_TARGET_CHAT_ID chưa được cấu hình trong System Settings.")
 
     redis = await get_redis_pool()
-    await redis.enqueue_job("crawl_target_group_history", limit=limit)
+    await redis.enqueue_job("crawl_target_group_history", limit=limit, _job_timeout=7200)
 
     return {
         "status": "success",

@@ -44,12 +44,14 @@ async def fast_download_document(
     save_path: str,
     progress_callback=None,
     status_callback=None,
-    connection_count: int = 8,
+    connection_count: int = 6,
 ) -> bool:
     """
-    High-Speed FastTelethon Parallel Downloader.
-    Opens `connection_count` parallel MTProto TCP senders to Telegram DC.
-    Maximizes download speed for Telegram Premium accounts (up to 30-50 MB/s).
+    High-Speed Parallel MTProto Downloader (Telethon Multi-Sender).
+    - Utilizes multiple parallel DC TCP senders for max throughput (up to 30-50 MB/s on Premium).
+    - Strict 12s per-chunk timeout prevents silent TCP stalls / 0.0 MB/s hangs.
+    - Automatic sender recovery: re-borrows fresh senders if a connection drops.
+    - Non-blocking file I/O so disk writes never block asyncio loop.
     """
     import math
     from telethon import utils
@@ -61,100 +63,168 @@ async def fast_download_document(
         return False
 
     file_name = os.path.basename(save_path)
-    logger.info(f"[FastDownload] Khởi tạo {connection_count} luồng song song tới Telegram DC cho '{file_name}' ({total_size / (1024*1024):.1f} MB)...")
+    logger.info(f"[FastDownload] 🚀 Khởi tạo {connection_count} luồng song song tới Telegram DC cho '{file_name}' ({total_size / (1024*1024):.1f} MB)...")
     if status_callback:
-        await status_callback(f"[Siêu tốc FastTelethon] Khởi tạo {connection_count} luồng tải song song...")
+        await status_callback(f"[Siêu tốc] Khởi tạo {connection_count} luồng tải song song...")
 
-    senders = []
     try:
         dc_id, location = utils.get_input_location(doc)
-        for _ in range(connection_count):
-            try:
-                s = await client._borrow_sender(dc_id)
-                senders.append(s)
-            except Exception as se:
-                logger.warning(f"Could not borrow sender for dc_id {dc_id}: {se}")
-                break
     except Exception as e:
-        logger.warning(f"[FastDownload] Không thể khởi tạo luồng song song: {e}. Fallback về tải tiêu chuẩn.")
+        logger.warning(f"[FastDownload] Không thể lấy DC location: {e}. Fallback về tiêu chuẩn.")
         return False
 
-    if not senders or len(senders) == 0:
-        return False
-
-    part_size = 512 * 1024  # 512 KB per request
-    parts_count = math.ceil(total_size / part_size)
-
+    # Pre-allocate output file size
     try:
-        # Pre-allocate output file size
         with open(save_path, 'wb') as f:
             f.seek(total_size - 1)
             f.write(b'\0')
+    except Exception as e:
+        logger.warning(f"[FastDownload] Không thể tạo file đích: {e}")
+        return False
 
-        downloaded = 0
-        queue = asyncio.Queue()
-        for i in range(parts_count):
-            queue.put_nowait(i)
+    part_size = 512 * 1024  # 512 KB per request (standard Telegram chunk)
+    parts_count = math.ceil(total_size / part_size)
 
-        file_lock = asyncio.Lock()
-        active = True
+    queue = asyncio.Queue()
+    for i in range(parts_count):
+        queue.put_nowait(i)
 
-        async def worker(sender):
-            nonlocal downloaded, active
-            with open(save_path, 'r+b') as f:
-                while active and not queue.empty():
-                    try:
-                        part_idx = queue.get_nowait()
-                    except asyncio.QueueEmpty:
+    downloaded = 0
+    active = True
+    active_lock = asyncio.Lock()
+    progress_lock = asyncio.Lock()
+
+    # Open file descriptor for direct non-overlapping writes
+    fd = os.open(save_path, os.O_RDWR | getattr(os, 'O_BINARY', 0))
+
+    def _write_part(offset: int, data: bytes):
+        try:
+            # os.pwrite on POSIX or lseek+write on Windows
+            if hasattr(os, 'pwrite'):
+                os.pwrite(fd, data, offset)
+            else:
+                os.lseek(fd, offset, os.SEEK_SET)
+                os.write(fd, data)
+        except Exception as we:
+            logger.error(f"[FastDownload Write Error] {we}")
+
+    async def worker_loop():
+        nonlocal downloaded, active
+        sender = None
+        consecutive_errors = 0
+
+        # Borrow initial sender
+        try:
+            sender = await client._borrow_sender(dc_id)
+        except Exception as be:
+            logger.warning(f"[FastDownload] Không thể mượn sender ban đầu: {be}")
+            return
+
+        try:
+            while active and not queue.empty():
+                try:
+                    part_idx = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+
+                offset = part_idx * part_size
+                limit = min(part_size, total_size - offset)
+                part_downloaded = False
+
+                for attempt in range(3):
+                    if not active:
                         break
 
-                    offset = part_idx * part_size
-                    limit = min(part_size, total_size - offset)
-
-                    success = False
-                    for attempt in range(3):
-                        if not active:
-                            break
+                    # If sender died or had consecutive errors, re-borrow a fresh sender
+                    if sender is None or consecutive_errors >= 2:
+                        if sender:
+                            try:
+                                await client._return_sender(sender)
+                            except Exception:
+                                pass
+                            sender = None
                         try:
-                            res = await sender(GetFileRequest(location, offset=offset, limit=limit))
-                            if res and hasattr(res, 'bytes') and res.bytes:
-                                async with file_lock:
-                                    f.seek(offset)
-                                    f.write(res.bytes)
-                                    downloaded += len(res.bytes)
-                                    if progress_callback:
+                            sender = await asyncio.wait_for(client._borrow_sender(dc_id), timeout=8.0)
+                            consecutive_errors = 0
+                        except Exception as re_err:
+                            logger.warning(f"[FastDownload] Tái kết nối sender thất bại: {re_err}")
+                            await asyncio.sleep(1.0)
+                            continue
+
+                    try:
+                        # Strict 12s timeout to prevent hanging TCP connections
+                        res = await asyncio.wait_for(
+                            sender(GetFileRequest(location, offset=offset, limit=limit)),
+                            timeout=12.0
+                        )
+
+                        if res and hasattr(res, 'bytes') and res.bytes:
+                            chunk_data = res.bytes
+                            # Write data in thread pool to avoid blocking asyncio loop
+                            await asyncio.to_thread(_write_part, offset, chunk_data)
+
+                            async with progress_lock:
+                                downloaded += len(chunk_data)
+                                if progress_callback:
+                                    try:
                                         progress_callback(downloaded, total_size)
-                                success = True
-                                break
-                        except Exception as err:
-                            err_str = str(err)
-                            if 'FLOOD' in err_str.upper():
-                                await asyncio.sleep(2)
-                            else:
-                                await asyncio.sleep(0.3)
+                                    except Exception:
+                                        pass
 
-                    if not success and active:
-                        queue.put_nowait(part_idx)
+                            consecutive_errors = 0
+                            part_downloaded = True
+                            break
+                        else:
+                            consecutive_errors += 1
+                    except asyncio.TimeoutError:
+                        consecutive_errors += 1
+                        logger.warning(f"[FastDownload] Chunk {part_idx} ({offset//1024}KB) timed out (12s). Thử lại...")
+                        # Reset sender on timeout so a fresh connection is used
+                        if sender:
+                            try:
+                                await client._return_sender(sender)
+                            except Exception:
+                                pass
+                            sender = None
+                        await asyncio.sleep(0.5)
+                    except Exception as exc:
+                        err_str = str(exc)
+                        consecutive_errors += 1
+                        if 'FLOOD' in err_str.upper():
+                            await asyncio.sleep(3.0)
+                        else:
+                            await asyncio.sleep(0.5)
 
-        tasks = [asyncio.create_task(worker(s)) for s in senders]
-        await asyncio.gather(*tasks)
+                if not part_downloaded and active:
+                    # Put back to queue to be picked up by other workers
+                    queue.put_nowait(part_idx)
+                    if consecutive_errors >= 5:
+                        logger.warning(f"[FastDownload] Worker gặp quá nhiều lỗi liên tiếp. Dừng luồng này.")
+                        break
 
-        actual_size = os.path.getsize(save_path) if os.path.exists(save_path) else 0
-        if actual_size == total_size:
-            logger.info(f"[FastDownload] Hoàn tất siêu tốc: '{file_name}' ({actual_size:,} bytes)")
-            return True
-        else:
-            logger.warning(f"[FastDownload] Kích thước file không khớp ({actual_size} vs {total_size}). Fallback về tiêu chuẩn.")
-            return False
-    except Exception as exc:
-        logger.warning(f"[FastDownload] Lỗi trong quá trình tải song song: {exc}. Fallback về tiêu chuẩn.")
-        return False
+        finally:
+            if sender:
+                try:
+                    await client._return_sender(sender)
+                except Exception:
+                    pass
+
+    try:
+        workers = [asyncio.create_task(worker_loop()) for _ in range(connection_count)]
+        await asyncio.gather(*workers)
     finally:
-        for s in senders:
-            try:
-                await client._return_sender(s)
-            except Exception:
-                pass
+        try:
+            os.close(fd)
+        except Exception:
+            pass
+
+    actual_size = os.path.getsize(save_path) if os.path.exists(save_path) else 0
+    if total_size > 0 and actual_size == total_size and downloaded >= total_size:
+        logger.info(f"[FastDownload] ✅ Hoàn tất siêu tốc: '{file_name}' ({actual_size:,} bytes)")
+        return True
+    else:
+        logger.warning(f"[FastDownload] Tải đa luồng chưa đủ dữ liệu ({actual_size} vs {total_size} bytes). Chuyển về chế độ chuẩn...")
+        return False
 
 
 async def download_telegram_document(client, message, save_dir: str, progress_callback=None, status_callback=None) -> str:

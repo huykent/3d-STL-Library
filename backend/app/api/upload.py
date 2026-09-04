@@ -84,7 +84,8 @@ async def upload_model_api(
     await redis.enqueue_job(
         "process_manual_upload",
         model_id=str(model.id),
-        filepath=temp_filepath
+        filepath=temp_filepath,
+        _job_timeout=7200
     )
     
     # Reload model with tags to avoid MissingGreenletError during model_validate

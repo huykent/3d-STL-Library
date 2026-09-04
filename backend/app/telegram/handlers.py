@@ -47,7 +47,8 @@ async def handle_new_message(event):
     await redis.enqueue_job(
         'process_telegram_message', 
         message_id=event.message.id,
-        chat_id=event.chat_id
+        chat_id=event.chat_id,
+        _job_timeout=7200
     )
 
 

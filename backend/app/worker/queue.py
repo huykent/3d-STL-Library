@@ -49,5 +49,5 @@ class WorkerSettings:
     job_timeout = 7200
     
     cron_jobs = [
-        cron(cron_crawl_history, minute=set(range(0, 60, 3)))  # Every 3 minutes
+        cron(cron_crawl_history, minute=set(range(0, 60, 10)))  # Every 10 minutes
     ]

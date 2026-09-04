@@ -147,7 +147,8 @@ async def cron_crawl_history(ctx: dict) -> None:
                                 await redis.enqueue_job(
                                     'process_telegram_message', 
                                     message_id=message.id,
-                                    chat_id=chat_id
+                                    chat_id=chat_id,
+                                    _job_timeout=7200
                                 )
                                 total_files_queued += 1
                                 logger.info(f"[CÀO LỊCH SỬ]{topic_label} 🚀 Đã đẩy '{file_name}' (#{message.id}) vào hàng đợi!")
@@ -241,7 +242,8 @@ async def manual_crawl_history(ctx: dict, chat_id: int, limit: int = 1) -> None:
                     await redis.enqueue_job(
                         'process_telegram_message', 
                         message_id=message.id,
-                        chat_id=chat_id
+                        chat_id=chat_id,
+                        _job_timeout=7200
                     )
                     files_queued += 1
                     # Drip-feed: chờ 2s giữa các lần enqueue để không gửi ồ ạt
@@ -345,6 +347,7 @@ async def crawl_target_group_history(ctx: dict, limit: int = 500) -> None:
                     "process_target_message",
                     message_id=message.id,
                     chat_id=target_chat_id,
+                    _job_timeout=7200,
                 )
                 queued += 1
 

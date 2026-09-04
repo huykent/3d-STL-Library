@@ -462,22 +462,29 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
 
 
             dl_start = time.time()
-            last_log_time = [0.0]
+            last_log_time = [time.time()]
+            last_downloaded = [0]
             current_loop = asyncio.get_event_loop()
 
             def dl_progress_callback(downloaded, total):
                 now = time.time()
-                if now - last_log_time[0] >= 2.0 or downloaded == total:
+                time_diff = now - last_log_time[0]
+                if time_diff >= 1.5 or downloaded == total:
+                    bytes_diff = downloaded - last_downloaded[0]
+                    # Instantaneous rolling speed (over last 1.5s window)
+                    inst_speed_mb = (bytes_diff / (1024 * 1024)) / time_diff if time_diff > 0 else 0
                     last_log_time[0] = now
-                    elapsed = now - dl_start
+                    last_downloaded[0] = downloaded
+
                     pct = int(10 + (downloaded / total) * 20) if total else 10
                     dl_mb = downloaded / (1024 * 1024)
                     tot_mb = total / (1024 * 1024)
-                    speed = (dl_mb / elapsed) if elapsed > 0 else 0
-                    eta_sec = int((total - downloaded) / (speed * 1024 * 1024)) if speed > 0 else 0
+                    
+                    remaining_bytes = max(0, total - downloaded)
+                    eta_sec = int(remaining_bytes / (inst_speed_mb * 1024 * 1024)) if inst_speed_mb > 0.1 else 0
                     log_msg = (
                         f"[{pct}%] Đang tải: {dl_mb:.1f}/{tot_mb:.1f} MB "
-                        f"({int(downloaded/total*100) if total else 0}%) | Tốc độ: {speed:.1f} MB/s | Dự kiến còn lại: ~{eta_sec}s"
+                        f"({int(downloaded/total*100) if total else 0}%) | Tốc độ: {inst_speed_mb:.1f} MB/s | Dự kiến còn lại: ~{eta_sec}s"
                     )
                     logger.info(f"[{model.original_filename}] {log_msg}")
                     try:
@@ -486,7 +493,6 @@ async def process_telegram_message(ctx: dict, message_id: int, chat_id: int) -> 
                                 _add_log_by_id(model.id, f"Tải file ({pct}%)", log_msg),
                                 current_loop
                             )
-
                     except Exception:
                         pass
 
