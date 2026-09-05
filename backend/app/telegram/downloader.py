@@ -38,19 +38,20 @@ async def extract_3d_files(file_path: str, extract_dir: str) -> list[str]:
         
     return extracted_3d_files
 
+_SENDER_CONNECT_LOCK = asyncio.Lock()
+
 async def fast_download_document(
     client,
     message,
     save_path: str,
     progress_callback=None,
     status_callback=None,
-    connection_count: int = 6,
+    connection_count: int = 4,
 ) -> bool:
     """
     High-Speed Parallel MTProto Downloader (Telethon Multi-Sender).
-    - Utilizes multiple parallel DC TCP senders for max throughput (up to 30-50 MB/s on Premium).
-    - Strict 12s per-chunk timeout prevents silent TCP stalls / 0.0 MB/s hangs.
-    - Automatic sender recovery: re-borrows fresh senders if a connection drops.
+    - Connection Mutex Lock prevents race conditions during _borrow_exported_sender.
+    - Multi-tier timeouts (6s connect, 10s chunk, overall file timeout) prevent stalls.
     - Non-blocking file I/O so disk writes never block asyncio loop.
     """
     import math
@@ -63,9 +64,10 @@ async def fast_download_document(
         return False
 
     file_name = os.path.basename(save_path)
-    logger.info(f"[FastDownload] 🚀 Khởi tạo {connection_count} luồng song song tới Telegram DC cho '{file_name}' ({total_size / (1024*1024):.1f} MB)...")
+    safe_connections = min(max(1, connection_count), 4)
+    logger.info(f"[FastDownload] 🚀 Khởi tạo {safe_connections} luồng song song tới Telegram DC cho '{file_name}' ({total_size / (1024*1024):.1f} MB)...")
     if status_callback:
-        await status_callback(f"[Siêu tốc] Khởi tạo {connection_count} luồng tải song song...")
+        await status_callback(f"[Siêu tốc] Khởi tạo {safe_connections} luồng tải song song...")
 
     try:
         dc_id, location = utils.get_input_location(doc)
@@ -91,7 +93,6 @@ async def fast_download_document(
 
     downloaded = 0
     active = True
-    active_lock = asyncio.Lock()
     progress_lock = asyncio.Lock()
 
     # Open file descriptor for direct non-overlapping writes
@@ -99,7 +100,6 @@ async def fast_download_document(
 
     def _write_part(offset: int, data: bytes):
         try:
-            # os.pwrite on POSIX or lseek+write on Windows
             if hasattr(os, 'pwrite'):
                 os.pwrite(fd, data, offset)
             else:
@@ -108,14 +108,19 @@ async def fast_download_document(
         except Exception as we:
             logger.error(f"[FastDownload Write Error] {we}")
 
+    async def _safe_borrow_sender():
+        """Borrow sender with mutex lock and strict 6s timeout."""
+        async with _SENDER_CONNECT_LOCK:
+            return await asyncio.wait_for(client._borrow_exported_sender(dc_id), timeout=6.0)
+
     async def worker_loop():
         nonlocal downloaded, active
         sender = None
         consecutive_errors = 0
 
-        # Borrow initial sender
+        # Borrow initial sender with lock and timeout
         try:
-            sender = await client._borrow_exported_sender(dc_id)
+            sender = await _safe_borrow_sender()
         except Exception as be:
             logger.warning(f"[FastDownload] Không thể mượn sender ban đầu: {be}")
             return
@@ -135,7 +140,6 @@ async def fast_download_document(
                     if not active:
                         break
 
-                    # If sender died or had consecutive errors, re-borrow a fresh sender
                     if sender is None or consecutive_errors >= 2:
                         if sender:
                             try:
@@ -144,7 +148,7 @@ async def fast_download_document(
                                 pass
                             sender = None
                         try:
-                            sender = await asyncio.wait_for(client._borrow_exported_sender(dc_id), timeout=8.0)
+                            sender = await _safe_borrow_sender()
                             consecutive_errors = 0
                         except Exception as re_err:
                             logger.warning(f"[FastDownload] Tái kết nối sender thất bại: {re_err}")
@@ -152,15 +156,14 @@ async def fast_download_document(
                             continue
 
                     try:
-                        # Strict 12s timeout to prevent hanging TCP connections
+                        # Strict 10s timeout to prevent hanging TCP connections
                         res = await asyncio.wait_for(
                             sender.send(GetFileRequest(location, offset=offset, limit=limit)),
-                            timeout=12.0
+                            timeout=10.0
                         )
 
                         if res and hasattr(res, 'bytes') and res.bytes:
                             chunk_data = res.bytes
-                            # Write data in thread pool to avoid blocking asyncio loop
                             await asyncio.to_thread(_write_part, offset, chunk_data)
 
                             async with progress_lock:
@@ -178,8 +181,7 @@ async def fast_download_document(
                             consecutive_errors += 1
                     except asyncio.TimeoutError:
                         consecutive_errors += 1
-                        logger.warning(f"[FastDownload] Chunk {part_idx} ({offset//1024}KB) timed out (12s). Thử lại...")
-                        # Reset sender on timeout so a fresh connection is used
+                        logger.warning(f"[FastDownload] Chunk {part_idx} ({offset//1024}KB) timed out (10s). Thử lại...")
                         if sender:
                             try:
                                 await client._return_exported_sender(sender)
@@ -196,7 +198,6 @@ async def fast_download_document(
                             await asyncio.sleep(0.5)
 
                 if not part_downloaded and active:
-                    # Put back to queue to be picked up by other workers
                     queue.put_nowait(part_idx)
                     if consecutive_errors >= 5:
                         logger.warning(f"[FastDownload] Worker gặp quá nhiều lỗi liên tiếp. Dừng luồng này.")
@@ -209,9 +210,20 @@ async def fast_download_document(
                 except Exception:
                     pass
 
+    workers = []
     try:
-        workers = [asyncio.create_task(worker_loop()) for _ in range(connection_count)]
-        await asyncio.gather(*workers)
+        workers = [asyncio.create_task(worker_loop()) for _ in range(safe_connections)]
+        # Dynamic overall timeout: 60s base + 3s per MB, capped between 60s and 1800s
+        overall_timeout = max(60.0, min(1800.0, (total_size / (1024 * 1024)) * 3.0))
+        await asyncio.wait_for(asyncio.gather(*workers), timeout=overall_timeout)
+    except asyncio.TimeoutError:
+        logger.warning(f"[FastDownload] Tải đa luồng cho '{file_name}' vượt quá thời gian cho phép ({overall_timeout:.0f}s). Hủy FastDownload...")
+        active = False
+        for w in workers:
+            w.cancel()
+    except Exception as ge:
+        logger.warning(f"[FastDownload Exception] {ge}")
+        active = False
     finally:
         try:
             os.close(fd)
@@ -223,7 +235,6 @@ async def fast_download_document(
         logger.info(f"[FastDownload] ✅ Hoàn tất siêu tốc: '{file_name}' ({actual_size:,} bytes)")
         return True
     else:
-        # Xóa file rác đã pre-allocate bằng 0 trước khi fallback về iter_download
         try:
             if os.path.exists(save_path):
                 os.unlink(save_path)
@@ -275,14 +286,14 @@ async def download_telegram_document(client, message, save_dir: str, progress_ca
                 save_path,
                 progress_callback=progress_callback,
                 status_callback=status_callback,
-                connection_count=8,  # 8 kết nối DC song song
+                connection_count=4,
             )
             if ok:
                 return save_path
         except Exception as e:
             logger.warning(f"[FastDownload Exception] {e}. Chuyển về chế độ iter_download tiêu chuẩn.")
 
-    # ── Fallback: Tải (hoặc tải tiếp) bằng iter_download chuẩn Telethon ──────
+    # ── Fallback: Tải (hoặc tải tiếp) bằng iter_download chuẩn Telethon có timeout từng chunk ──────
     CHUNK_SIZE = 4 * 1024 * 1024  # 4 MB
     existing_size = 0
     if os.path.exists(save_path):
@@ -299,16 +310,44 @@ async def download_telegram_document(client, message, save_dir: str, progress_ca
             downloaded = existing_size
 
             with open(save_path, file_mode) as f:
-                async for chunk in client.iter_download(
+                gen = client.iter_download(
                     message.document,
                     offset=existing_size,
                     chunk_size=CHUNK_SIZE,
                     request_size=CHUNK_SIZE,
-                ):
-                    f.write(chunk)
-                    downloaded += len(chunk)
-                    if progress_callback:
-                        progress_callback(downloaded, total_size)
+                ).__aiter__()
+
+                while True:
+                    try:
+                        # Wrap per-chunk retrieval in strict 15s timeout
+                        chunk = await asyncio.wait_for(gen.__anext__(), timeout=15.0)
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if progress_callback:
+                            progress_callback(downloaded, total_size)
+                    except StopAsyncIteration:
+                        break
+
+            # ── Xác minh kích thước sau khi tải xong ─────────────────────
+            if total_size > 0:
+                actual_size = os.path.getsize(save_path)
+                if actual_size != total_size:
+                    logger.warning(
+                        f"[Download] File '{file_name}' bị cắt ngắn: "
+                        f"kỳ vọng {total_size:,} bytes, thực tế {actual_size:,} bytes. "
+                        f"Xóa và thử lại (lần {attempt}/{max_retries})..."
+                    )
+                    try:
+                        os.unlink(save_path)
+                    except OSError:
+                        pass
+                    existing_size = 0
+                    raise RuntimeError(
+                        f"Download incomplete: expected {total_size:,}, got {actual_size:,} bytes"
+                    )
+
+            logger.info(f"[Download] Hoàn tất: '{file_name}' ({downloaded:,} bytes)")
+            return save_path
 
             # ── Xác minh kích thước sau khi tải xong ─────────────────────
             if total_size > 0:

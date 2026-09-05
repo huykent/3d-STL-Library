@@ -363,7 +363,45 @@ async def crawl_target_group_history(ctx: dict, limit: int = 500, **kwargs) -> N
                     await asyncio.sleep(0.02)  # Yield to event loop
 
     except Exception as e:
-        logger.error(f"[CÀO NHÓM ĐÍCH] Lỗi: {e}", exc_info=True)
+        logger.error(f"[CÀO NHÓM ĐÍCH] Lỗi khi quét lịch sử nhóm đích: {e}")
+
+
+async def cron_watchdog_cleanup(ctx: dict, **kwargs) -> None:
+    """
+    Arq cron job to recover orphaned or stuck jobs in PostgreSQL.
+    Runs every 2 minutes.
+    - If a Model3D has been in 'processing' status with updated_at > 8 minutes ago:
+      - If retries < 5: reset status to 'pending' to retry cleanly.
+      - If retries >= 5: set status to 'failed' and log timeout.
+    """
+    from datetime import datetime, timedelta, timezone
+    from app.models.model3d import Model3D, ProcessingStatus
+
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=8)
+    
+    try:
+        async with AsyncSessionLocal() as session:
+            stmt = select(Model3D).where(
+                Model3D.processing_status == ProcessingStatus.processing,
+                Model3D.updated_at < cutoff
+            )
+            res = await session.execute(stmt)
+            stuck_models = res.scalars().all()
+            
+            if stuck_models:
+                logger.warning(f"[WATCHDOG] ⚠️ Phát hiện {len(stuck_models)} job bị kẹt > 8 phút. Đang xử lý tự động...")
+                for m in stuck_models:
+                    m.processing_retries = (m.processing_retries or 0) + 1
+                    if m.processing_retries >= 5:
+                        m.processing_status = ProcessingStatus.failed
+                        m.processing_error = "Worker watchdog: Task timed out after 8+ minutes of inactivity."
+                        logger.warning(f"[WATCHDOG] ❌ Job #{m.id} ({m.original_filename}) đã vượt quá 5 lần thử. Đánh dấu 'failed'.")
+                    else:
+                        m.processing_status = ProcessingStatus.pending
+                        logger.info(f"[WATCHDOG] 🔄 Reset job #{m.id} ({m.original_filename}) về 'pending' (Lần thử {m.processing_retries}/5).")
+                await session.commit()
+    except Exception as e:
+        logger.error(f"[WATCHDOG Exception] {e}", exc_info=True)
 
     logger.info(
         f"[CÀO NHÓM ĐÍCH] ✅ Hoàn tất. Đã enqueue {queued} file mới, bỏ qua {skipped} file trùng (trên tổng {count_scanned} tin nhắn)."

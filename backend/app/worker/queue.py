@@ -26,7 +26,7 @@ async def shutdown(ctx):
     if client:
         await client.disconnect()
 
-from app.worker.crawler import cron_crawl_history, manual_crawl_history, crawl_target_group_history
+from app.worker.crawler import cron_crawl_history, manual_crawl_history, crawl_target_group_history, cron_watchdog_cleanup
 from arq import cron
 from arq.worker import func
 
@@ -38,6 +38,7 @@ class WorkerSettings:
         func(process_target_message, timeout=7200),
         func(crawl_target_group_history, timeout=7200),
         func(cron_crawl_history, timeout=7200),
+        func(cron_watchdog_cleanup, timeout=300),
     ]
     on_startup = startup
     on_shutdown = shutdown
@@ -50,5 +51,6 @@ class WorkerSettings:
     job_timeout = 7200
     
     cron_jobs = [
-        cron(cron_crawl_history, minute=set(range(0, 60, 2)))  # Every 2 minutes
+        cron(cron_crawl_history, minute=set(range(0, 60, 2))),  # Every 2 minutes
+        cron(cron_watchdog_cleanup, minute=set(range(0, 60, 2)))  # Every 2 minutes
     ]
