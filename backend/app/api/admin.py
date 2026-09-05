@@ -502,8 +502,12 @@ async def get_queue_status_api(
                 "updated_at": latest_llm_model.updated_at.isoformat() if latest_llm_model.updated_at else None
             }
 
-    # Summary count
-    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
+    # Summary count (tính từ 00:00 sáng hôm nay theo giờ Việt Nam UTC+7)
+    from datetime import timedelta
+    vn_now = datetime.utcnow() + timedelta(hours=7)
+    today_start_vn = vn_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start = today_start_vn - timedelta(hours=7)
+
     stmt_completed_today = select(func.count(Model3D.id)).where(
         Model3D.processing_status == ProcessingStatus.completed,
         Model3D.updated_at >= today_start
