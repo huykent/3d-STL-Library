@@ -154,7 +154,7 @@ async def fast_download_document(
                     try:
                         # Strict 12s timeout to prevent hanging TCP connections
                         res = await asyncio.wait_for(
-                            sender(GetFileRequest(location, offset=offset, limit=limit)),
+                            sender.send(GetFileRequest(location, offset=offset, limit=limit)),
                             timeout=12.0
                         )
 
