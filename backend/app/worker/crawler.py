@@ -20,17 +20,22 @@ async def cron_crawl_history(ctx: dict, **kwargs) -> None:
     import os
     history_days_str = await SettingsService.get_setting("CRAWL_HISTORY_DAYS")
     if not history_days_str:
-        history_days_str = os.getenv("CRAWL_HISTORY_DAYS", "30")
-        
-    if not history_days_str or int(history_days_str) <= 0:
-        logger.info("Auto-history crawling disabled (CRAWL_HISTORY_DAYS <= 0).")
-        return  # Auto-history crawling is disabled if 0 or not set
+        history_days_str = os.getenv("CRAWL_HISTORY_DAYS", "all")
 
-    try:
-        history_days = min(max(1, int(history_days_str)), 3650)
-        target_date = datetime.now(timezone.utc) - timedelta(days=history_days)
-    except Exception:
-        target_date = datetime.now(timezone.utc) - timedelta(days=365)
+    # Mặc định cào TOÀN BỘ lịch sử không giới hạn ngày (0, all, unlimited, all_time, trống).
+    # Chỉ giới hạn ngày khi người dùng chỉ định rõ số ngày > 0.
+    target_date = None
+    if history_days_str and history_days_str.strip().lower() not in ["0", "-1", "all", "all_time", "unlimited", "none", ""]:
+        try:
+            val = int(history_days_str.strip())
+            if val > 0:
+                target_date = datetime.now(timezone.utc) - timedelta(days=val)
+                logger.info(f"[CÀO LỊCH SỬ] ⏳ Giới hạn cào trong {val} ngày gần nhất (target: {target_date.strftime('%Y-%m-%d %H:%M')}).")
+        except Exception:
+            target_date = None
+
+    if target_date is None:
+        logger.info("[CÀO LỊCH SỬ] 🌐 ĐANG CÀO TOÀN BỘ LỊCH SỬ TIN NHẮN (Không giới hạn ngày).")
 
     redis = ctx.get("redis")
     
@@ -87,9 +92,9 @@ async def cron_crawl_history(ctx: dict, **kwargs) -> None:
 
                 for topic_id, topic_title in topics_to_crawl:
                     topic_label = f" [Tab: {topic_title}]" if topic_id is not None else ""
-                    # Quét theo đợt (tối đa 3 đợt x 40 tin = 120 tin/chu kỳ/tab) để cào liên tục
-                    max_batches = 3
-                    batch_size = 40
+                    # Quét theo đợt (tối đa 5 đợt x 50 tin = 250 tin/chu kỳ/tab) để cào nhanh và liên tục
+                    max_batches = 5
+                    batch_size = 50
 
                     current_offset = offset_id
 
@@ -100,6 +105,7 @@ async def cron_crawl_history(ctx: dict, **kwargs) -> None:
 
                         messages = await telegram_client.get_messages(chat_id, **kwargs)
                         if not messages:
+                            logger.info(f"[CÀO LỊCH SỬ]{topic_label} 🏁 Đã cào tới tin nhắn đầu tiên của nhóm/tab.")
                             break
 
                         new_oldest_id = current_offset
@@ -122,9 +128,9 @@ async def cron_crawl_history(ctx: dict, **kwargs) -> None:
                             if file_ext in ['stl', 'obj', '3mf', 'pm7m', 'pwscene', 'zip', 'rar']:
                                 file_size_mb = (message.document.size / (1024 * 1024)) if message.document else 0
 
-                                # Check date constraint
-                                if message.date and message.date < target_date:
-                                    logger.info(f"[CÀO LỊCH SỬ]{topic_label} ⏩ Tin #{message.id} ({file_name}) đã cũ hơn {history_days} ngày. Dừng tab.")
+                                # Check date constraint if configured
+                                if target_date and message.date and message.date < target_date:
+                                    logger.info(f"[CÀO LỊCH SỬ]{topic_label} ⏩ Tin #{message.id} ({file_name}) đã cũ hơn ngày giới hạn. Dừng tab.")
                                     break
 
                                 # Check duplicates in DB
@@ -153,12 +159,15 @@ async def cron_crawl_history(ctx: dict, **kwargs) -> None:
                                 total_files_queued += 1
                                 logger.info(f"[CÀO LỊCH SỬ]{topic_label} 🚀 Đã đẩy '{file_name}' (#{message.id}) vào hàng đợi!")
 
-                                await asyncio.sleep(0.1)
+                                await asyncio.sleep(0.05)
 
-                            current_offset = new_oldest_id
+                        if new_oldest_id == current_offset:
+                            # Không còn tin cũ hơn trong batch
+                            break
+                        current_offset = new_oldest_id
 
                         # Nghỉ nhẹ giữa các batch
-                        await asyncio.sleep(0.3)
+                        await asyncio.sleep(0.2)
 
                     # Lưu mốc tiến độ
                     if not is_forum:
@@ -166,7 +175,7 @@ async def cron_crawl_history(ctx: dict, **kwargs) -> None:
                         group.last_message_id = current_offset
                         await session.commit()
 
-                logger.info(f"[CÀO LỊCH SỬ] Hoàn tất quét nhóm '{group_title}', đã xếp hàng {total_files_queued} file 3D mới.")
+                logger.info(f"[CÀO LỊCH SỬ] Hoàn tất đợt quét nhóm '{group_title}', đã xếp hàng {total_files_queued} file 3D mới.")
 
             except Exception as e:
                 logger.error(f"Failed to crawl history for group {chat_id}: {e}")

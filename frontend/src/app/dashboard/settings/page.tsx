@@ -300,15 +300,15 @@ export default function SettingsPage() {
               />
             </div>
             <div className="space-y-2 md:col-span-2">
-              <label className="text-sm font-medium text-gray-300">Auto-Crawl History (Days)</label>
+              <label className="text-sm font-medium text-gray-300">Cào lịch sử tin nhắn (Ngày / Toàn bộ)</label>
               <Input
-                type="number"
+                type="text"
                 value={settings.CRAWL_HISTORY_DAYS || '0'}
                 onChange={(e) => handleChange('CRAWL_HISTORY_DAYS', e.target.value)}
-                placeholder="0"
+                placeholder="0 hoặc all để cào toàn bộ"
                 className="bg-[#0d1117] border-white/10 text-white"
               />
-              <p className="text-xs text-gray-400">Set to 0 to only process NEW files. Set to 7 to crawl files from the last 7 days automatically (slow drip feed).</p>
+              <p className="text-xs text-gray-400">Nhập <b>0</b> hoặc <b>all</b> để cào TOÀN BỘ lịch sử từ đầu nhóm đến nay (chạy tự động từng đợt). Nhập số ngày (ví dụ: 30) nếu chỉ muốn giới hạn trong N ngày gần nhất.</p>
             </div>
           </div>
         </CardContent>
