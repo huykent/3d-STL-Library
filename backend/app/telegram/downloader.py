@@ -113,6 +113,18 @@ async def fast_download_document(
         async with _SENDER_CONNECT_LOCK:
             return await asyncio.wait_for(client._borrow_exported_sender(dc_id), timeout=6.0)
 
+    async def _safe_cleanup_sender(sender_obj):
+        """Cleanly return or disconnect an exported sender without leaving pending tasks."""
+        if not sender_obj:
+            return
+        try:
+            await client._return_exported_sender(sender_obj)
+        except Exception:
+            try:
+                await sender_obj.disconnect()
+            except Exception:
+                pass
+
     async def worker_loop():
         nonlocal downloaded, active
         sender = None
@@ -142,10 +154,7 @@ async def fast_download_document(
 
                     if sender is None or consecutive_errors >= 2:
                         if sender:
-                            try:
-                                await client._return_exported_sender(sender)
-                            except Exception:
-                                pass
+                            await _safe_cleanup_sender(sender)
                             sender = None
                         try:
                             sender = await _safe_borrow_sender()
@@ -183,10 +192,7 @@ async def fast_download_document(
                         consecutive_errors += 1
                         logger.warning(f"[FastDownload] Chunk {part_idx} ({offset//1024}KB) timed out (10s). Thử lại...")
                         if sender:
-                            try:
-                                await client._return_exported_sender(sender)
-                            except Exception:
-                                pass
+                            await _safe_cleanup_sender(sender)
                             sender = None
                         await asyncio.sleep(0.5)
                     except Exception as exc:
@@ -205,10 +211,7 @@ async def fast_download_document(
 
         finally:
             if sender:
-                try:
-                    await client._return_exported_sender(sender)
-                except Exception:
-                    pass
+                await _safe_cleanup_sender(sender)
 
     workers = []
     try:
@@ -221,9 +224,13 @@ async def fast_download_document(
         active = False
         for w in workers:
             w.cancel()
+        await asyncio.gather(*workers, return_exceptions=True)
     except Exception as ge:
         logger.warning(f"[FastDownload Exception] {ge}")
         active = False
+        for w in workers:
+            w.cancel()
+        await asyncio.gather(*workers, return_exceptions=True)
     finally:
         try:
             os.close(fd)
