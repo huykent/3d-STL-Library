@@ -43,8 +43,8 @@ class WorkerSettings:
     on_shutdown = shutdown
     redis_settings = RedisSettings.from_dsn(get_settings().REDIS_URL)
     
-    # Increase concurrent jobs for fast parallel processing
-    max_jobs = 20
+    # Controlled concurrency to avoid Telegram DC FloodWait rate limits
+    max_jobs = 6
     
     # Increase timeout to 2 hours (7200s)
     job_timeout = 7200

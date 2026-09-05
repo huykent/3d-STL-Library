@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 # ── Global download lock: chỉ tải 1 file Telegram tại một thời điểm ──────────
 # Giúp ngăn FloodWait do gửi quá nhiều request song song đến Telegram
-DOWNLOAD_SEMAPHORE = asyncio.Semaphore(3)  # Premium: cho phép 3 file tải song song
+DOWNLOAD_SEMAPHORE = asyncio.Semaphore(2)  # Optimal 2 concurrent files (12 parallel connections) to prevent FloodWait
 
 from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
